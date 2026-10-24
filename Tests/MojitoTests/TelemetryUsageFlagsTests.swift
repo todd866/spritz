@@ -52,4 +52,34 @@ struct TelemetryUsageFlagsTests {
         #expect(TelemetryUploader.utcWeek(Self.day(1970, 1, 4)) == 0)  // Sunday
         #expect(TelemetryUploader.utcWeek(Self.day(1970, 1, 5)) == 1)  // Monday
     }
+
+    @Test @MainActor func forkDisablesTelemetryWithoutMutatingPreferences() {
+        #expect(TelemetryStore.isEnabled == false)
+
+        let defaults = UserDefaults.standard
+        let keys = [
+            PrefsKey.telemetryPendingEmoji,
+            PrefsKey.telemetryPendingEmojiTotal,
+            PrefsKey.telemetryPendingSymbol,
+            PrefsKey.telemetryPendingGif,
+            PrefsKey.telemetryPendingEmoticon,
+            PrefsKey.telemetryPendingEggs,
+            PrefsKey.telemetryPendingQuickAccess,
+            PrefsKey.telemetryLastUploadDay,
+            PrefsKey.telemetryConsentSeen,
+        ]
+        let before = keys.map { (key: $0, value: defaults.object(forKey: $0)) }
+
+        TelemetryStore.recordEmoji(hexcode: "1F600")
+        TelemetryStore.recordSymbol()
+        TelemetryStore.recordGif()
+        TelemetryStore.recordEmoticon()
+        TelemetryStore.recordEggDiscovery()
+        TelemetryStore.recordQuickAccess()
+        TelemetryUploader.shared.uploadIfDue()
+
+        for item in before {
+            #expect(String(describing: defaults.object(forKey: item.key)) == String(describing: item.value))
+        }
+    }
 }

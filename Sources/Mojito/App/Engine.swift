@@ -87,6 +87,19 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     /// (1 when opened from the pill's chevron, 0 from the menu).
     private var browserDeleteCount: Int = 0
 
+    /// A short-lived, best-effort context read prepared while the user is
+    /// typing. It is consumed synchronously when the browser opens; opening
+    /// never waits for AX or performs text inspection.
+    private struct ContextSuggestionSnapshot {
+        let text: String
+        let pid: pid_t
+        let element: AXUIElement
+        let createdAt: Date
+    }
+    private var contextSnapshot: ContextSuggestionSnapshot?
+    private var contextReadWork: DispatchWorkItem?
+    private var contextGeneration: UInt = 0
+
     init(database: EmojiDatabase, exclusions: ExclusionStore) {
         self.database = database
         self.exclusions = exclusions
@@ -149,6 +162,9 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             guard let self else { return }
             self.viewModel.browser?.select(emoji)
             self.pickFromBrowser(keepOpen: NSEvent.modifierFlags.contains(.shift))
+        }
+        pickerWindow.onQuickPick = { [weak self] emoji in
+            self?.pickFromBrowser(override: emoji)
         }
         viewModel.onBrowserCategory = { [weak self] category in
             guard let self else { return }
@@ -267,6 +283,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     private func handleAppActivated(notification: Notification) {
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
               let bundleID = app.bundleIdentifier else { return }
+        invalidateContextSuggestions()
         // Our own panel briefly looking frontmost is not a real app switch.
         if bundleID == Bundle.main.bundleIdentifier { return }
         pendingEmoticonUndo = nil
@@ -284,6 +301,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     private func handleFocusChanged() {
+        invalidateContextSuggestions()
         pendingEmoticonUndo = nil
         // The browser owns the keyboard while open and a pick is synthesized
         // into whatever field is focused, so an AX focus change (in-app field
@@ -357,6 +375,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     private func cancelCapture() {
+        invalidateContextSuggestions()
         stateMachine.reset()
         viewModel.reset()
         pickerWindow.hide()
@@ -376,6 +395,77 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         captureAwaitingFieldInfo = false
         captureIsExcluded = false
         browserDeleteCount = 0
+    }
+
+    private func invalidateContextSuggestions() {
+        contextGeneration &+= 1
+        contextReadWork?.cancel()
+        contextReadWork = nil
+        contextSnapshot = nil
+    }
+
+    private func scheduleContextSuggestions() {
+        contextSnapshot = nil
+        guard let element = FocusedElementCache.shared.element,
+              let pid = FocusedElementCache.shared.focusedPID,
+              FocusedElementCache.shared.haveFieldInfo,
+              !FocusedElementCache.shared.focusedIsSecure,
+              FocusedElementCache.shared.focusedIsEditable,
+              let role = FocusedElementCache.shared.focusedRole,
+              ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].contains(role) else {
+            contextGeneration &+= 1
+            contextReadWork?.cancel()
+            contextReadWork = nil
+            return
+        }
+        contextGeneration &+= 1
+        let generation = contextGeneration
+        contextReadWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.contextGeneration == generation,
+                      let current = FocusedElementCache.shared.element,
+                      FocusedElementCache.shared.focusedPID == pid,
+                      CFEqual(current, element),
+                      let text = Self.readPrecedingContext(from: element), !text.isEmpty else { return }
+                self.contextSnapshot = ContextSuggestionSnapshot(text: text, pid: pid, element: element, createdAt: Date())
+            }
+        }
+        contextReadWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+    }
+
+    private static func readPrecedingContext(from element: AXUIElement) -> String? {
+        AXUIElementSetMessagingTimeout(element, 0.005)
+        let info = AppContextDetector.classify(element)
+        guard !info.secure, info.editable,
+              let role = info.role, ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].contains(role) else { return nil }
+        var rangeRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
+              let ref = rangeRef,
+              CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
+        let rangeValue = ref as! AXValue
+        var selected = CFRange(location: 0, length: 0)
+        guard AXValueGetValue(rangeValue, .cfRange, &selected), selected.location > 0 else { return nil }
+        let start = max(0, selected.location - 160)
+        var query = CFRange(location: start, length: selected.location - start)
+        guard let queryValue = AXValueCreate(.cfRange, &query) else { return nil }
+        var textRef: AnyObject?
+        guard AXUIElementCopyParameterizedAttributeValue(element, kAXStringForRangeParameterizedAttribute as CFString, queryValue, &textRef) == .success else { return nil }
+        return (textRef as? String)?.suffix(160).description
+    }
+
+    private func consumeContextSuggestions() -> String? {
+        contextGeneration &+= 1
+        contextReadWork?.cancel()
+        contextReadWork = nil
+        defer { contextSnapshot = nil }
+        guard let snapshot = contextSnapshot,
+              Date().timeIntervalSince(snapshot.createdAt) <= 2,
+              FocusedElementCache.shared.focusedPID == snapshot.pid,
+              let current = FocusedElementCache.shared.element,
+              CFEqual(current, snapshot.element) else { return nil }
+        return snapshot.text
     }
 
     func attach(permissions: PermissionsCoordinator) {
@@ -424,6 +514,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         objectWillChange.send()
         usage = [:]
         UserDefaults.standard.set([String: Int](), forKey: PrefsKey.usageCounts)
+        UserDefaults.standard.set([String](), forKey: PrefsKey.recentEmoji)
         // Lifetime totals track milestone progress; they reset alongside
         // the per-emoji counts so "Clear stats" feels like a true reset.
         UserDefaults.standard.set(0, forKey: PrefsKey.totalEmojiInserted)
@@ -511,6 +602,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         // which the state machine doesn't track. No entry → pass through to
         // the focused app's normal undo.
         if case .cmdZ = input {
+            invalidateContextSuggestions()
             if case .idle = stateMachine.state,
                pendingEmoticonUndo != nil, performEmoticonUndoIfFresh() {
                 return true
@@ -542,6 +634,17 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         // `.stickyPicking`, and the consume decision below needs to know
         // whether the session was already live.
         let wasInStickySession = inStickySession
+
+        // Prepare context only during ordinary typing. The delayed read runs
+        // off the event-tap/main thread and is discarded on any focus move.
+        if case .idle = stateMachine.state {
+            switch input {
+            case .nameChar, .cancelChar, .backspace, .colon:
+                scheduleContextSuggestions()
+            default:
+                invalidateContextSuggestions()
+            }
+        }
 
         let output = stateMachine.handle(input)
 
@@ -848,6 +951,11 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         case .pickBrowser(let keepOpen):
             pickFromBrowser(keepOpen: keepOpen)
 
+        case .pickBrowserShortcut(let key):
+            if let emoji = viewModel.browser?.emojiForShortcut(key) {
+                pickFromBrowser(override: emoji)
+            }
+
         case .closeBrowser:
             collapseBrowser()
 
@@ -1027,9 +1135,24 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         browserDeleteCount = deleteCount
         captureIsExcluded = false
         stateMachine.enterBrowsing(query: "")
-        viewModel.browser = EmojiBrowserViewModel(database: database, quickAccess: quickAccess)
+        let contextText = consumeContextSuggestions()
+        let browser = EmojiBrowserViewModel(database: database, quickAccess: quickAccess, contextText: contextText)
+        viewModel.browser = browser
+        persistNumberedSuggestions(browser.quickSuggestions)
+        if UserDefaults.standard.dictionary(forKey: EmojiBrowserViewModel.letterBindingsKey) as? [String: String] != browser.letterBindings {
+            UserDefaults.standard.set(browser.letterBindings, forKey: EmojiBrowserViewModel.letterBindingsKey)
+        }
+        viewModel.browser?.onModeChange = { [weak self] in
+            self?.stateMachine.setBrowsingQuery("")
+            self?.stateMachine.setBrowserSearchInputActive(false)
+        }
+        viewModel.browser?.onSearchModeChange = { [weak self] active in
+            self?.stateMachine.setBrowserSearchInputActive(active)
+        }
+        let openingBrowser = viewModel.browser
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, case .browsing = self.stateMachine.state,
+                  self.viewModel.browser === openingBrowser else { return }
             self.viewModel.compact = false
             self.viewModel.expanded = true
             let anchor = CaretLocator.caretRect()
@@ -1039,8 +1162,25 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         }
     }
 
-    private func pickFromBrowser(keepOpen: Bool = false) {
-        let emoji = viewModel.browser?.selectedEmoji
+    /// Establishes the 1–8 bindings on the first real browser open. Existing
+    /// bindings are never re-ranked; newly missing slots are appended from the
+    /// current ranked fallback so a partial preference remains stable.
+    private func persistNumberedSuggestions(_ suggestions: [Emoji]) {
+        let defaults = UserDefaults.standard
+        var unique = Set<String>()
+        var saved = (defaults.stringArray(forKey: EmojiBrowserViewModel.numberedEmojiKey) ?? [])
+            .filter { database.byHexcode[$0] != nil && unique.insert($0).inserted }
+        saved = Array(saved.prefix(8))
+        var seen = Set(saved)
+        for emoji in suggestions where saved.count < 8 && seen.insert(emoji.hexcode).inserted {
+            saved.append(emoji.hexcode)
+        }
+        guard defaults.stringArray(forKey: EmojiBrowserViewModel.numberedEmojiKey) != saved else { return }
+        defaults.set(saved, forKey: EmojiBrowserViewModel.numberedEmojiKey)
+    }
+
+    private func pickFromBrowser(keepOpen: Bool = false, override: Emoji? = nil) {
+        let emoji = override ?? viewModel.browser?.selectedEmoji
         let delete = browserDeleteCount
         // Copy instead of typing only when there's nowhere to type (e.g. the
         // browser was opened over the Finder). The exclusion list doesn't apply
@@ -1407,6 +1547,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     private func recordUsage(emoji: Emoji) {
+        EmojiRecents.record(emoji.hexcode)
         usage[emoji.hexcode, default: 0] += 1
         UserDefaults.standard.set(usage, forKey: PrefsKey.usageCounts)
         // Symbols (from the `::query::` trigger) route through here too; branch

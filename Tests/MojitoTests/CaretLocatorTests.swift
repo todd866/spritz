@@ -74,4 +74,48 @@ struct CaretLocatorTests {
         let fake = FakeText(text: ":::bees", rects: ["2,3": selected])
         #expect(resolve(fake, caret: 2, length: 3) == selected)
     }
+
+    @Test func windowRoleIsNeverTreatedAsTextCaret() {
+        #expect(!CaretLocator.isTextInputRole("AXWindow"))
+        #expect(!CaretLocator.isTextInputRole(nil))
+    }
+
+    @Test func normalTextFieldRoleAllowsElementFallback() {
+        #expect(CaretLocator.isTextInputRole("AXTextField"))
+        #expect(CaretLocator.isTextInputRole("AXTextArea"))
+        #expect(CaretLocator.isTextInputRole("AXSearchField"))
+    }
+
+    @Test func usableWindowAnchorSitsInLowerPortion() {
+        let window = CGRect(x: 100, y: 100, width: 1_000, height: 800)
+        let anchor = CaretLocator.windowFallbackRect(windowFrame: window, screenFrames: [CGRect(x: 0, y: 0, width: 1_600, height: 1_000)])
+        #expect(anchor != nil)
+        #expect(anchor!.midX == window.midX)
+        #expect(anchor!.minY > window.minY)
+        #expect(anchor!.maxY < window.minY + window.height * 0.3)
+    }
+
+    @Test func tinyWindowDoesNotProduceFallbackAnchor() {
+        #expect(CaretLocator.windowFallbackRect(windowFrame: CGRect(x: 0, y: 0, width: 64, height: 64), screenFrames: [CGRect(x: 0, y: 0, width: 1_600, height: 1_000)]) == nil)
+    }
+
+    @Test func offScreenWindowDoesNotProduceFallbackAnchor() {
+        #expect(CaretLocator.windowFallbackRect(windowFrame: CGRect(x: 2_000, y: 2_000, width: 800, height: 600), screenFrames: [CGRect(x: 0, y: 0, width: 1_600, height: 1_000)]) == nil)
+    }
+}
+
+@MainActor
+struct CompanionPlacementTests {
+    @Test func companionDoesNotCoverNumberRowOnLaptopOrOffsetDisplay() {
+        for screen in [CGRect(x: 0, y: 0, width: 1280, height: 720),
+                       CGRect(x: -1280, y: 300, width: 1280, height: 600)] {
+            for dy in [CGFloat(40), 220, 480] {
+                let strip = CGRect(x: screen.minX + 700, y: screen.minY + dy, width: 357, height: 54)
+                let initial = CGRect(x: strip.minX, y: strip.minY, width: 352, height: 420)
+                let result = PickerWindow.browserFrame(initial, avoiding: strip, visible: screen)
+                #expect(screen.contains(result))
+                #expect(!result.intersects(strip))
+            }
+        }
+    }
 }

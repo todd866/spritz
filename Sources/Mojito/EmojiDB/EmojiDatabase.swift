@@ -31,6 +31,7 @@ final class EmojiDatabase: ObservableObject {
     static let shared = EmojiDatabase()
 
     private(set) var all: [Emoji] = []
+    private(set) var contextWords: [String: Set<String>] = [:]
     private(set) var indexed: [IndexedEmoji] = []
     private(set) var byShortcode: [String: Emoji] = [:]
     private(set) var byHexcode: [String: Emoji] = [:]
@@ -135,6 +136,11 @@ final class EmojiDatabase: ObservableObject {
             let decoded = try JSONDecoder().decode([Emoji].self, from: data)
                 .filter { $0.group != Self.componentGroup }
             self.all = decoded
+            self.contextWords = Dictionary(uniqueKeysWithValues: decoded.map { emoji in
+                (emoji.hexcode, Set(([emoji.label] + emoji.shortcodes + emoji.tags).flatMap {
+                    $0.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+                }))
+            })
             self.activeLocales = activeAdditionalLocales()
             applyAliases(AliasStore.shared.aliases)
         } catch {

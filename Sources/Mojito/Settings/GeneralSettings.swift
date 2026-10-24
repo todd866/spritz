@@ -8,11 +8,9 @@ struct GeneralSettingsView: View {
     @AppStorage(PrefsKey.skinTone) private var skinToneRaw: String = SkinTone.default.rawValue
     @AppStorage(PrefsKey.emoticonsEnabled) private var emoticonsEnabled: Bool = true
     @AppStorage(PrefsKey.arrowConversionEnabled) private var arrowConversionEnabled: Bool = true
-    @AppStorage(PrefsKey.telemetryEnabled) private var telemetryEnabled: Bool = true
     @AppStorage(PrefsKey.eggsEnabled) private var eggsEnabled: Bool = true
     @AppStorage(PrefsKey.eggDiscoverySoundEnabled) private var eggDiscoverySound: Bool = true
     @AppStorage(PrefsKey.eggEffectSoundsEnabled) private var eggEffectSounds: Bool = true
-    @State private var autoUpdates: Bool = UpdaterCoordinator.shared.automaticUpdates
 
     /// The single source of truth for every trigger control on this page.
     /// Persisted (normalized) on each change so the live Engine picks it up.
@@ -51,31 +49,11 @@ struct GeneralSettingsView: View {
                 .toggleStyle(.switch)
 
                 LabeledContent {
-                    HStack(spacing: 8) {
-                        Button("Check now") {
-                            UpdaterCoordinator.shared.checkForUpdates()
-                        }
-                        Toggle("Automatic updates", isOn: $autoUpdates)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .onChange(of: autoUpdates) { _, newValue in
-                                UpdaterCoordinator.shared.automaticUpdates = newValue
-                            }
+                    Button("Check now") {
+                        UpdaterCoordinator.shared.checkForUpdates()
                     }
                 } label: {
-                    Text("Automatic updates")
-                }
-
-                Toggle(isOn: $telemetryEnabled) {
-                    HStack(spacing: 4) {
-                        Text("Share anonymous usage stats")
-                        StatsHelpButton()
-                    }
-                }
-                .toggleStyle(.switch)
-                .onChange(of: telemetryEnabled) { _, _ in
-                    // Interacting with the toggle is itself the consent decision.
-                    UserDefaults.standard.set(true, forKey: PrefsKey.telemetryConsentSeen)
+                    Text(verbatim: "Updates")
                 }
             }
 
@@ -202,25 +180,6 @@ struct GeneralSettingsView: View {
     }
 }
 
-
-struct StatsHelpButton: View {
-    @State private var isShown = false
-
-    var body: some View {
-        Button {
-            isShown.toggle()
-        } label: {
-            Image(systemName: "questionmark.circle")
-                .foregroundStyle(.secondary)
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $isShown, arrowEdge: .top) {
-            Text("Anonymous, aggregate counts only — no identifiers. The full dataset is public at [mojito.wells.ee/stats](https://mojito.wells.ee/stats).")
-                .padding(12)
-                .frame(width: 260)
-        }
-    }
-}
 
 @available(macOS 26.0, *)
 private struct MenuBarHelpButton: View {

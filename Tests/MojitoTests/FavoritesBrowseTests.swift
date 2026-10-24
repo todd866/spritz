@@ -177,6 +177,7 @@ struct TriggerStateMachineBrowseTests {
         var sm = TriggerStateMachine()
         sm.enterBrowsing(query: "")
         #expect(sm.state == .browsing(query: ""))
+        sm.setBrowserSearchInputActive(true)
 
         let c = sm.handle(.nameChar("c"))
         #expect(c.action == .refreshBrowser(query: "c"))
@@ -207,6 +208,21 @@ struct TriggerStateMachineBrowseTests {
         #expect(sm.state == .browsing(query: ""))
     }
 
+    @Test func browserNumberPicksOnlyBeforeSearch() {
+        var sm = TriggerStateMachine()
+        sm.enterBrowsing(query: "")
+        let pick = sm.handle(.nameChar("3"))
+        #expect(pick.action == .pickBrowserShortcut(key: "3"))
+        #expect(pick.consumesKey)
+        // Engine closes only after resolving an available slot.
+        #expect(sm.state == .browsing(query: ""))
+        sm.setBrowserSearchInputActive(true)
+        _ = sm.handle(.nameChar("h"))
+        #expect(sm.handle(.nameChar("3")).action == .refreshBrowser(query: "h3"))
+        sm.enterBrowsing(query: "")
+        #expect(sm.handle(.nameChar("9")).action == .pickBrowserShortcut(key: "9"))
+    }
+
     @Test func browsingEscapeCloses() {
         var sm = TriggerStateMachine()
         sm.enterBrowsing(query: "ab")
@@ -214,6 +230,56 @@ struct TriggerStateMachineBrowseTests {
         #expect(esc.action == .closeBrowser)
         #expect(esc.consumesKey == true)
         #expect(sm.state == .idle)
+    }
+}
+
+struct EmojiLetterBindingsTests {
+    private func emoji(_ hex: String, _ label: String, _ shortcodes: [String] = []) -> Emoji {
+        Emoji(hexcode: hex, character: "🙂", label: label, shortcodes: shortcodes,
+              tags: [], group: 0, order: 0)
+    }
+
+    @Test func preservesSavedBindingsAndUsesMnemonics() {
+        let heart = emoji("2764-FE0F", "red heart", ["heart"])
+        let pirate = emoji("1F3F4-200D-2620-FE0F", "skull and crossbones", ["pirate"])
+        let result = EmojiLetterBindings.resolve(
+            candidates: [heart, pirate],
+            saved: ["2764-fe0f": "z", "not-a-hex": "q"]
+        )
+        #expect(result["2764-FE0F"] == "z")
+        #expect(result["1F3F4-200D-2620-FE0F"] == "p")
+        #expect(result["not-a-hex"] == nil)
+    }
+
+    @Test func firstTwentySixNewBindingsAreUnique() {
+        let candidates = (0..<26).map {
+            emoji(String(format: "1000-%02X", $0), "item \($0)")
+        }
+        let result = EmojiLetterBindings.resolve(candidates: candidates, saved: [:])
+        #expect(result.count == 26)
+        #expect(Set(result.values).count == 26)
+    }
+
+    @Test func invalidSavedValuesAreDiscardedAndLaterEntriesRemainCovered() {
+        let candidates = (0..<52).map { emoji(String(format: "2000-%02X", $0), "emoji \($0)") }
+        let result = EmojiLetterBindings.resolve(
+            candidates: candidates,
+            saved: ["2000-00": "AB", "2000-01": "é", "2000-02": "Q"]
+        )
+        #expect(result.count == 52)
+        #expect(result["2000-00"] != nil)
+        #expect(result["2000-01"] != nil)
+        #expect(result["2000-02"] == "q")
+        #expect(result.values.allSatisfy {
+            guard $0.unicodeScalars.count == 1, let scalar = $0.unicodeScalars.first else { return false }
+            return scalar.value >= 97 && scalar.value <= 122
+        })
+    }
+
+    @Test func preservesOpaqueSymbolIdentifiers() {
+        let symbol = emoji("SYM_command", "command")
+        let result = EmojiLetterBindings.resolve(candidates: [symbol], saved: ["SYM_command": "k"])
+        #expect(result["SYM_command"] == "k")
     }
 }
 
@@ -301,5 +367,275 @@ struct QuickAccessStoreTests {
         let second = QuickAccess.resolved(store: store, database: db, usage: usage).map(\.hexcode)
         #expect(first == second)
         #expect(Array(first.prefix(2)) == [min(x, y), max(x, y)])
+    }
+}
+
+
+@MainActor
+struct PersonalBrowserTests {
+    @Test func shortcutSelectionTracksArrowsAndSearchUsesSevenColumns() {
+        withDefaults { defaults in
+            let sample = Array(EmojiDatabase.shared.all.prefix(40))
+            defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map {
+                ($0.element.hexcode, 100 - $0.offset)
+            }), forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            #expect(browser.shortcutSelectedIndex == 0)
+            #expect(browser.selectedEmoji?.hexcode == browser.shortcutItems.first?.emoji.hexcode)
+            browser.move(.right)
+            #expect(browser.shortcutSelectedIndex == 1)
+            #expect(browser.selectedEmoji?.hexcode == browser.shortcutItems[1].emoji.hexcode)
+
+            browser.beginSearch()
+            browser.setQuery("")
+            browser.move(.down)
+            #expect(browser.selectedIndex == 7)
+        }
+    }
+
+    @Test func selectingNumberedItemWorksEvenWhenModeListOmitsIt() {
+        withDefaults { defaults in
+            let db = EmojiDatabase.shared
+            guard let numbered = db.all.first else { return }
+            defaults.set([numbered.hexcode], forKey: EmojiBrowserViewModel.numberedEmojiKey)
+            let browser = model(defaults)
+            #expect(browser.emojiForShortcut("1")?.hexcode == numbered.hexcode)
+            browser.select(numbered)
+            #expect(browser.shortcutSelectedIndex == 0)
+            #expect(browser.selectedEmoji?.hexcode == numbered.hexcode)
+        }
+    }
+
+    @Test func singleKeyShortcutsExposeStableNumbersAndPagedLetters() {
+        withDefaults { defaults in
+            let sample = Array(EmojiDatabase.shared.all.prefix(40))
+            defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map {
+                ($0.element.hexcode, 100 - $0.offset)
+            }), forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            #expect(browser.shortcutItems.prefix(8).map(\.key) == Array("12345678"))
+            #expect(browser.emojiForShortcut("1")?.hexcode == browser.quickSuggestions.first?.hexcode)
+            #expect(browser.shortcutItems.count <= 34)
+            for page in 0..<browser.shortcutPageCount {
+                if page > 0 { browser.changeShortcutPage(by: 1) }
+                let items = browser.shortcutItems
+                #expect(Set(items.map(\.key)).count == items.count)
+                for item in items {
+                    #expect(browser.emojiForShortcut(item.key)?.hexcode == item.emoji.hexcode)
+                    #expect(browser.emojiForShortcut(Character(String(item.key).uppercased()))?.hexcode == item.emoji.hexcode)
+                }
+            }
+        }
+    }
+
+    @Test func mnemonicBindingsSurviveUsageChangesAndModes() {
+        withDefaults { defaults in
+            let sample = Array(EmojiDatabase.shared.all.prefix(60))
+            defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map { ($0.element.hexcode, 100 - $0.offset) }), forKey: PrefsKey.usageCounts)
+            let first = model(defaults)
+            defaults.set(first.quickSuggestions.map(\.hexcode), forKey: EmojiBrowserViewModel.numberedEmojiKey)
+            defaults.set(first.letterBindings, forKey: EmojiBrowserViewModel.letterBindingsKey)
+            defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map { ($0.element.hexcode, 1 + $0.offset) }), forKey: PrefsKey.usageCounts)
+            defaults.set(sample.reversed().map(\.hexcode), forKey: PrefsKey.recentEmoji)
+            let reopened = model(defaults)
+            #expect(reopened.letterBindings == first.letterBindings)
+            for mode in [EmojiBrowserViewModel.Mode.mostUsed, .recent, .all] {
+                reopened.selectMode(mode)
+                var covered = Set<String>()
+                for page in 0..<reopened.shortcutPageCount {
+                    if page > 0 { reopened.changeShortcutPage(by: 1) }
+                    let items = reopened.shortcutItems
+                    #expect(Set(items.map(\.key)).count == items.count)
+                    for item in items.dropFirst(reopened.quickSuggestions.count) {
+                        #expect(String(item.key) == first.letterBindings[item.emoji.hexcode])
+                        covered.insert(item.emoji.hexcode)
+                    }
+                }
+                let numbered = Set(reopened.quickSuggestions.map(\.hexcode))
+                #expect(covered == Set(reopened.current.map(\.hexcode)).subtracting(numbered))
+            }
+        }
+    }
+
+    @Test func searchIsExplicitAndExitRestoresShortcutMode() {
+        withDefaults { defaults in
+            defaults.set(["1F602": 5], forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            var changes: [Bool] = []
+            browser.onSearchModeChange = { changes.append($0) }
+            #expect(!browser.searchInputActive)
+            browser.beginSearch()
+            #expect(browser.searchInputActive)
+            browser.setQuery("rocket")
+            #expect(browser.isSearching)
+            browser.exitSearch()
+            #expect(!browser.searchInputActive)
+            #expect(browser.query.isEmpty)
+            #expect(changes == [true, false])
+            #expect(browser.emojiForShortcut("1")?.hexcode == browser.quickSuggestions.first?.hexcode)
+        }
+    }
+
+    @Test func numberedChoicesStayFixedAcrossSearchAndModes() {
+        withDefaults { defaults in
+            let sample = Array(EmojiDatabase.shared.all.prefix(12))
+            defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map { ($0.element.hexcode, 100 - $0.offset) }), forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            let choices = browser.quickSuggestions.map(\.hexcode)
+            #expect(choices == Array(sample.prefix(8)).map(\.hexcode))
+            browser.setQuery("heart")
+            browser.selectMode(.all)
+            browser.selectMode(.recent)
+            #expect(browser.quickSuggestions.map(\.hexcode) == choices)
+        }
+    }
+
+    private func withDefaults(_ body: (UserDefaults) throws -> Void) rethrows {
+        let name = "mojito.tests.personal.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        try body(defaults)
+    }
+    private func model(_ defaults: UserDefaults) -> EmojiBrowserViewModel {
+        EmojiBrowserViewModel(database: .shared, quickAccess: QuickAccessStore(defaults: defaults), defaults: defaults)
+    }
+    @Test func contextSuggestionsUseExactLocalEmojiKeywords() {
+        withDefaults { defaults in
+            defaults.set(["1F602": 2], forKey: PrefsKey.usageCounts)
+            let browser = EmojiBrowserViewModel(
+                database: .shared,
+                quickAccess: QuickAccessStore(defaults: defaults),
+                defaults: defaults,
+                contextText: "That was hilarious, laughing so hard"
+            )
+            #expect(browser.mode == .suggested)
+            #expect(browser.current.first?.hexcode == "1F602")
+            #expect(browser.availableModes.first == .suggested)
+        }
+    }
+    @Test func numberedPreferenceIsReadWithoutBeingMutatedByBrowserModel() {
+        withDefaults { defaults in
+            let saved = ["1F680", "1F602"]
+            defaults.set(saved, forKey: EmojiBrowserViewModel.numberedEmojiKey)
+            let browser = model(defaults)
+            #expect(browser.quickSuggestions.prefix(2).map(\.hexcode) == saved)
+            #expect(defaults.stringArray(forKey: EmojiBrowserViewModel.numberedEmojiKey) == saved)
+        }
+    }
+    @Test func wholeHistoryIsVisibleWithoutUnusedCatalogue() throws {
+        try withDefaults { defaults in
+            let sample = Array(EmojiDatabase.shared.all.filter { $0.group >= 0 }.prefix(49))
+            #expect(sample.count == 49)
+            defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map { ($0.element.hexcode, 49 - $0.offset) }), forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            #expect(browser.mode == .mostUsed)
+            #expect(browser.current.map(\.hexcode) == sample.map(\.hexcode))
+            var visible = Set<String>()
+            for page in 0..<browser.shortcutPageCount {
+                if page > 0 { browser.changeShortcutPage(by: 1) }
+                visible.formUnion(browser.shortcutItems.map { $0.emoji.hexcode })
+            }
+            #expect(visible == Set(sample.map(\.hexcode)))
+        }
+    }
+    @Test func recentsAreIndependentFromFrequencyAndSurviveReopen() {
+        withDefaults { defaults in
+            defaults.set(["1F602": 500, "1F680": 1], forKey: PrefsKey.usageCounts)
+            EmojiRecents.record("1F602", defaults: defaults)
+            EmojiRecents.record("1F680", defaults: defaults)
+            EmojiRecents.record("1F602", defaults: defaults)
+            EmojiRecents.record("1F680", defaults: defaults)
+            let browser = model(defaults)
+            #expect(browser.current.first?.hexcode == "1F602")
+            browser.selectMode(.recent)
+            #expect(browser.current.map(\.hexcode) == ["1F680", "1F602"])
+            #expect(defaults.stringArray(forKey: PrefsKey.recentEmoji) == ["1F680", "1F602"])
+        }
+    }
+    @Test func searchIsGlobalAndClearingRestoresPersonalMode() {
+        withDefaults { defaults in
+            defaults.set(["1F602": 5], forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            browser.hoverIndex = 0
+            browser.setQuery("rocket")
+            #expect(browser.hoverIndex == nil)
+            #expect(browser.current.contains { $0.hexcode == "1F680" })
+            browser.setQuery("")
+            #expect(browser.current.map(\.hexcode) == ["1F602"])
+            browser.setQuery("zzqxzzqxzzqx")
+            #expect(browser.current.isEmpty)
+            #expect(browser.selectedEmoji == nil)
+            browser.selectMode(.all)
+            #expect(browser.query.isEmpty)
+            #expect(browser.current.count > 1000)
+        }
+    }
+    @Test func allCategoryIndicesAndNavigationMatchVisibleCells() {
+        withDefaults { defaults in
+            defaults.set(["1F602": 5], forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            browser.selectMode(.all)
+            for section in browser.sections {
+                browser.selectCategory(section.category)
+                #expect(browser.selectedEmoji?.hexcode == section.cells.first?.emoji.hexcode)
+                for item in section.cells {
+                    #expect(browser.current[item.id].hexcode == item.emoji.hexcode)
+                }
+            }
+        }
+    }
+    @Test func freshInstallOpensCatalogueAndRecentStaysEmpty() {
+        withDefaults { defaults in
+            let browser = model(defaults)
+            #expect(browser.mode == .all)
+            #expect(!browser.shortcutItems.isEmpty)
+            browser.selectMode(.recent)
+            #expect(browser.current.isEmpty)
+            browser.move(.down)
+            #expect(browser.selectedEmoji == nil)
+            browser.selectMode(.all)
+            #expect(!browser.current.isEmpty)
+        }
+    }
+    @Test func modeChangeClearsTheEngineQueryBeforeFurtherTyping() {
+        withDefaults { defaults in
+            let browser = model(defaults)
+            var machine = TriggerStateMachine()
+            machine.enterBrowsing(query: "heart")
+            browser.setQuery("heart")
+            browser.onModeChange = { machine.setBrowsingQuery(""); machine.setBrowserSearchInputActive(false) }
+            browser.selectMode(.recent)
+            let output = machine.handle(.nameChar("r"))
+            #expect(output.action == .pickBrowserShortcut(key: "r"))
+            #expect(browser.query.isEmpty)
+        }
+    }
+    @Test func changingModesResetsDeepSelectionAndHover() {
+        withDefaults { defaults in
+            defaults.set(["1F602": 5, "1F680": 2], forKey: PrefsKey.usageCounts)
+            defaults.set(["1F680", "1F602"], forKey: PrefsKey.recentEmoji)
+            let browser = model(defaults)
+            browser.selectMode(.all)
+            browser.selectedIndex = 900
+            browser.hoverIndex = 901
+            browser.selectMode(.recent)
+            #expect(browser.hoverIndex == nil)
+            #expect(browser.selectedIndex == 0)
+            #expect(browser.selectedEmoji?.hexcode == "1F602")
+            browser.move(.right)
+            #expect(browser.selectedEmoji?.hexcode == "1F680")
+            browser.setQuery("heart")
+            browser.selectMode(.recent)
+            #expect(browser.query.isEmpty)
+            #expect(browser.current.map(\.hexcode) == ["1F680", "1F602"])
+        }
+    }
+    @Test func futureUsageChangesTheRanking() {
+        withDefaults { defaults in
+            defaults.set(["1F602": 5, "1F680": 1], forKey: PrefsKey.usageCounts)
+            #expect(model(defaults).current.first?.hexcode == "1F602")
+            defaults.set(["1F602": 5, "1F680": 6], forKey: PrefsKey.usageCounts)
+            #expect(model(defaults).current.first?.hexcode == "1F680")
+        }
     }
 }

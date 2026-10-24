@@ -16,9 +16,10 @@ enum TelemetryStore {
     /// can't skew the public ranking. Anti-skew, not an identification control.
     static let perEmojiDailyCap = 100
 
-    /// Mirrors the uploader's gate: opt-out, default on.
+    /// Usage telemetry is not part of this fork. Keep the old storage shape so
+    /// existing insert paths remain cheap no-ops and old preferences are safe.
     static var isEnabled: Bool {
-        (defaults.object(forKey: PrefsKey.telemetryEnabled) as? Bool) ?? true
+        false
     }
 
     // MARK: - Recording (called from the insert path)

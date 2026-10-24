@@ -44,6 +44,8 @@
 #   - brew install create-dmg gh
 #
 set -euo pipefail
+echo "Upstream release automation is disabled in this fork; see README.md." >&2
+exit 1
 
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then

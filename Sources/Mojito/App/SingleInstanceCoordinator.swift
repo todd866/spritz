@@ -12,12 +12,12 @@ import os.log
 final class SingleInstanceCoordinator {
     static let shared = SingleInstanceCoordinator()
 
-    private static let releaseBundleID = "ee.wells.Mojito"
-    private static let devBundleID = "ee.wells.Mojito.dev"
+    private static let releaseBundleID = "io.github.todd866.Spritz"
+    private static let devBundleID = "io.github.todd866.Spritz.dev"
     /// Sparkle's relauncher lives well under a second.
     private static let peerMinLifetime: TimeInterval = 3.0
 
-    private let log = OSLog(subsystem: "ee.wells.Mojito", category: "SingleInstance")
+    private let log = OSLog(subsystem: "io.github.todd866.Spritz", category: "SingleInstance")
     private var launchObserver: NSObjectProtocol?
     /// AppDelegate checks this in `applicationDidFinishLaunching` and skips
     /// engine/onboarding setup if we're on the way out.

@@ -939,7 +939,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"$CONFIGURATION\" = \"Debug\" ] && [ \"${MOJITO_INSTALL_DEV_APP:-YES}\" != \"NO\" ]; then\n  # Xcode 26's build system schedules this script BEFORE the\n  # bundle's implicit codesign step (and serializes them — we\n  # can't poll-wait because codesign blocks on us finishing).\n  # So we sign the destination ourselves with the same identity\n  # Xcode uses (`EXPANDED_CODE_SIGN_IDENTITY` is the cert SHA-1).\n  # Sparkle.framework was signed earlier in the build and rsyncs\n  # over already-signed; we just need to (re)sign the dylibs and\n  # the bundle wrapper.\n  rsync -a --delete \"$TARGET_BUILD_DIR/$WRAPPER_NAME/\" \"/Applications/$WRAPPER_NAME/\"\n  DEST=\"/Applications/$WRAPPER_NAME\"\n  for f in \"$DEST/Contents/MacOS\"/*.dylib; do\n    [ -f \"$f\" ] && codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" \\\n      --options runtime --timestamp=none \"$f\" >/dev/null\n  done\n  codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" \\\n    --entitlements \"$SRCROOT/$CODE_SIGN_ENTITLEMENTS\" \\\n    --options runtime --timestamp=none \"$DEST\" >/dev/null\n  echo \"Copied $WRAPPER_NAME to /Applications/ (signed in place)\"\n  # If the app was already running, quit and relaunch from the new\n  # build. `pkill` returns 0 only when it actually signalled something,\n  # which doubles as our \"was running\" check — skip the relaunch on\n  # a cold build so we don't surprise-launch the app.\n  APP_NAME=\"${WRAPPER_NAME%.app}\"\n  if pkill -x \"$APP_NAME\" 2>/dev/null; then\n    # Wait for clean exit so `open` picks up the freshly-copied bundle.\n    for _ in $(seq 1 10); do\n      pgrep -x \"$APP_NAME\" >/dev/null || break\n      sleep 0.1\n    done\n    open \"/Applications/$WRAPPER_NAME\"\n    echo \"Relaunched $WRAPPER_NAME\"\n  fi\nfi\n";
+			shellScript = "if [ \"$CONFIGURATION\" = \"Debug\" ] && [ \"${MOJITO_INSTALL_DEV_APP:-NO}\" != \"NO\" ]; then\n  # Xcode 26's build system schedules this script BEFORE the\n  # bundle's implicit codesign step (and serializes them — we\n  # can't poll-wait because codesign blocks on us finishing).\n  # So we sign the destination ourselves with the same identity\n  # Xcode uses (`EXPANDED_CODE_SIGN_IDENTITY` is the cert SHA-1).\n  # Sparkle.framework was signed earlier in the build and rsyncs\n  # over already-signed; we just need to (re)sign the dylibs and\n  # the bundle wrapper.\n  rsync -a --delete \"$TARGET_BUILD_DIR/$WRAPPER_NAME/\" \"/Applications/$WRAPPER_NAME/\"\n  DEST=\"/Applications/$WRAPPER_NAME\"\n  for f in \"$DEST/Contents/MacOS\"/*.dylib; do\n    [ -f \"$f\" ] && codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" \\\n      --options runtime --timestamp=none \"$f\" >/dev/null\n  done\n  codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" \\\n    --entitlements \"$SRCROOT/$CODE_SIGN_ENTITLEMENTS\" \\\n    --options runtime --timestamp=none \"$DEST\" >/dev/null\n  echo \"Copied $WRAPPER_NAME to /Applications/ (signed in place)\"\n  # If the app was already running, quit and relaunch from the new\n  # build. `pkill` returns 0 only when it actually signalled something,\n  # which doubles as our \"was running\" check — skip the relaunch on\n  # a cold build so we don't surprise-launch the app.\n  APP_NAME=\"${WRAPPER_NAME%.app}\"\n  if pkill -x \"$APP_NAME\" 2>/dev/null; then\n    # Wait for clean exit so `open` picks up the freshly-copied bundle.\n    for _ in $(seq 1 10); do\n      pgrep -x \"$APP_NAME\" >/dev/null || break\n      sleep 0.1\n    done\n    open \"/Applications/$WRAPPER_NAME\"\n    echo \"Relaunched $WRAPPER_NAME\"\n  fi\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -1199,9 +1199,9 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = ee.wells.MojitoTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.todd866.SpritzTests;
 				SDKROOT = macosx;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mojito Dev.app/Contents/MacOS/Mojito Dev";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Spritz Dev.app/Contents/MacOS/Spritz Dev";
 			};
 			name = Release;
 		};
@@ -1217,9 +1217,9 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = ee.wells.MojitoTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.todd866.SpritzTests;
 				SDKROOT = macosx;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mojito Dev.app/Contents/MacOS/Mojito Dev";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Spritz Dev.app/Contents/MacOS/Spritz Dev";
 			};
 			name = Debug;
 		};
@@ -1230,7 +1230,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "$(APP_ICON_NAME)";
 				CODE_SIGN_ENTITLEMENTS = Resources/Mojito.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 36;
+				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -1239,8 +1239,9 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.10.1;
-				PRODUCT_BUNDLE_IDENTIFIER = ee.wells.Mojito;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.todd866.Spritz;
+				PRODUCT_NAME = Spritz;
 				PRODUCT_MODULE_NAME = Mojito;
 				SDKROOT = macosx;
 			};
@@ -1324,7 +1325,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "$(APP_ICON_NAME)";
 				CODE_SIGN_ENTITLEMENTS = Resources/Mojito.dev.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 36;
+				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -1333,10 +1334,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.10.1;
-				PRODUCT_BUNDLE_IDENTIFIER = ee.wells.Mojito.dev;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.todd866.Spritz.dev;
 				PRODUCT_MODULE_NAME = Mojito;
-				PRODUCT_NAME = "Mojito Dev";
+				PRODUCT_NAME = "Spritz Dev";
 				SDKROOT = macosx;
 			};
 			name = Debug;

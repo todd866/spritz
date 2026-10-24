@@ -123,7 +123,7 @@ struct AboutSettingsView: View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Button("Report an issue") {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/wr/mojito/issues/new")!)
+                    NSWorkspace.shared.open(URL(string: "https://github.com/todd866/spritz/issues/new")!)
                 }
                 Button(debugCopied ? "Copied!" : "Copy debug info") {
                     copyDebugInfo()
@@ -131,7 +131,12 @@ struct AboutSettingsView: View {
             }
 
             HStack(spacing: 8) {
-                Link("Website", destination: URL(string: "https://github.com/wr/mojito")!)
+                Link("Source", destination: URL(string: "https://github.com/todd866/spritz")!)
+                    .font(.callout)
+                Text(verbatim: "·")
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+                Link("Upstream Mojito by Wells", destination: URL(string: "https://github.com/wr/mojito")!)
                     .font(.callout)
                 if !copyright.isEmpty {
                     Text(verbatim: "·")

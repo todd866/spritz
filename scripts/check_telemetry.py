@@ -1,31 +1,9 @@
 #!/usr/bin/env python3
-"""Fail if the anonymous-stats pipeline has drifted across its layers.
+"""Guard the fork's promise that usage telemetry is disabled.
 
-Run in CI (.github/workflows/telemetry.yml) and locally:
-
-    python3 scripts/check_telemetry.py
-
-Telemetry flows through three places that must agree, in two files:
-
-  1. Swift client  — features() + the totals payload in
-     Sources/Mojito/Telemetry/TelemetryUploader.swift (what an install sends).
-  2. Worker ingest — FEATURE_KEYS + TOTAL_KINDS in stats-worker/src/index.js
-     (the allow-list; anything not here is silently dropped on receipt).
-  3. Worker publish — PUBLIC_FEATURE_KEYS in the same file (the curated subset
-     shown on mojito.wells.ee/stats).
-
-When someone adds a feature flag or insertion counter and wires only one or
-two of these, data goes missing with no error anywhere. This check is the
-backstop — the telemetry analogue of check_localizations.py: every reported
-feature must be allow-listed, and the published set must be a real subset.
-
-To fix a reported gap:
-  - feature drift  → add/remove the key in BOTH features() and FEATURE_KEYS.
-  - publish gap    → every PUBLIC_FEATURE_KEYS entry must also be in FEATURE_KEYS.
-  - totals drift   → keep the Swift `totals` payload keys and TOTAL_KINDS in sync.
-  - usage drift    → keep usageFlags() keys and USAGE_KINDS in sync.
-A key can be ingested but not published (kept for the debug/internal view);
-those are listed as a note, not a failure.
+This intentionally checks the client source rather than the removed upstream
+stats worker. The fork keeps compatibility call sites, but must not collect,
+upload, or ask for consent to send usage data.
 """
 from __future__ import annotations
 
@@ -34,130 +12,65 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-UPLOADER = ROOT / "Sources" / "Mojito" / "Telemetry" / "TelemetryUploader.swift"
-WORKER = ROOT / "stats-worker" / "src" / "index.js"
+TELEMETRY = ROOT / "Sources" / "Mojito" / "Telemetry"
 
 
-def fail(msg: str) -> None:
-    print(f"❌ {msg}")
+def fail(message: str) -> None:
+    print(f"❌ {message}")
 
 
-def swift_block_keys(text: str, start: int) -> list[str]:
-    """Keys of the bracketed dict literal beginning at the first `[` after
-    `start`, matched to its closing `]` so nested dicts/arrays are handled."""
-    i = text.index("[", start) + 1
-    depth, j = 1, i
-    while j < len(text) and depth:
-        if text[j] == "[":
+def body(text: str, signature: str) -> str:
+    start = text.index(signature)
+    brace = text.index("{", start)
+    depth = 0
+    for index in range(brace, len(text)):
+        if text[index] == "{":
             depth += 1
-        elif text[j] == "]":
+        elif text[index] == "}":
             depth -= 1
-        j += 1
-    block = re.sub(r"//[^\n]*", "", text[i : j - 1])  # drop line comments
-    return re.findall(r'"([A-Za-z][A-Za-z0-9_]*)"\s*:', block)
-
-
-def js_array(text: str, name: str) -> list[str]:
-    m = re.search(rf"const\s+{name}\s*=\s*\[(.*?)\]", text, re.DOTALL)
-    if not m:
-        return []
-    return re.findall(r'"([A-Za-z][A-Za-z0-9_]*)"', m.group(1))
-
-
-def dups(items: list[str]) -> list[str]:
-    seen, out = set(), []
-    for it in items:
-        if it in seen and it not in out:
-            out.append(it)
-        seen.add(it)
-    return out
+            if depth == 0:
+                return text[brace + 1:index]
+    raise ValueError(f"unterminated body for {signature}")
 
 
 def main() -> int:
-    for p in (UPLOADER, WORKER):
-        if not p.exists():
-            sys.exit(f"missing file: {p}")
+    store_path = TELEMETRY / "TelemetryStore.swift"
+    uploader_path = TELEMETRY / "TelemetryUploader.swift"
+    consent_path = TELEMETRY / "TelemetryConsent.swift"
+    for path in (store_path, uploader_path, consent_path):
+        if not path.exists():
+            sys.exit(f"missing file: {path}")
 
-    swift = UPLOADER.read_text()
-    worker = WORKER.read_text()
+    store = store_path.read_text()
+    uploader = uploader_path.read_text()
+    consent = consent_path.read_text()
+    failures: list[str] = []
 
-    feat_fn = swift.index("func features()")
-    swift_features = swift_block_keys(swift, swift.index("return [", feat_fn))
-    swift_totals = swift_block_keys(swift, swift.index('"totals":'))
-    usage_fn = swift.index("func usageFlags(")
-    swift_usage = swift_block_keys(swift, swift.index("return [", usage_fn))
+    enabled = body(store, "static var isEnabled")
+    if not re.fullmatch(r"\s*(?:return\s+)?false\s*", enabled):
+        failures.append("TelemetryStore.isEnabled is not unconditionally false")
 
-    ingest = js_array(worker, "FEATURE_KEYS")
-    public = js_array(worker, "PUBLIC_FEATURE_KEYS")
-    total_kinds = js_array(worker, "TOTAL_KINDS")
-    usage_kinds = js_array(worker, "USAGE_KINDS")
+    upload = body(uploader, "func uploadIfDue()")
+    if upload.strip():
+        failures.append("TelemetryUploader.uploadIfDue() is not a no-op")
 
-    ok = True
+    if not re.search(r"hasBeenSeen: Bool\s*\{\s*true\s*\}", consent):
+        failures.append("TelemetryConsent.hasBeenSeen is not permanently true")
+    present = body(consent, "static func presentIfNeeded()")
+    if present.strip():
+        failures.append("TelemetryConsent.presentIfNeeded() is not a no-op")
 
-    # No list may repeat a key.
-    for label, items in [
-        ("features()", swift_features), ("FEATURE_KEYS", ingest),
-        ("PUBLIC_FEATURE_KEYS", public), ("TOTAL_KINDS", total_kinds),
-        ('"totals" payload', swift_totals), ("usageFlags()", swift_usage),
-        ("USAGE_KINDS", usage_kinds),
-    ]:
-        if not items:
-            fail(f"could not parse any keys from {label} — has it moved or been renamed?")
-            ok = False
-        d = dups(items)
-        if d:
-            fail(f"{label} has duplicate keys: {', '.join(d)}")
-            ok = False
+    forbidden = re.compile(r"URLSession|URLRequest|dataTask|httpMethod|stats\.mojito|telemetry\.wells", re.IGNORECASE)
+    for label, text in (("TelemetryStore", store), ("TelemetryUploader", uploader), ("TelemetryConsent", consent)):
+        if forbidden.search(text):
+            failures.append(f"{label} contains a telemetry networking path")
 
-    # 1. Client features() and the worker ingest allow-list must match exactly.
-    sf, ik = set(swift_features), set(ingest)
-    if sf - ik:
-        fail("features() sends keys the worker drops (add to FEATURE_KEYS): "
-             + ", ".join(sorted(sf - ik)))
-        ok = False
-    if ik - sf:
-        fail("FEATURE_KEYS allow-lists keys the client never sends "
-             "(remove, or add to features()): " + ", ".join(sorted(ik - sf)))
-        ok = False
-
-    # 2. Everything published must be ingestible.
-    pk = set(public)
-    if pk - ik:
-        fail("PUBLIC_FEATURE_KEYS publishes keys not in FEATURE_KEYS: "
-             + ", ".join(sorted(pk - ik)))
-        ok = False
-
-    # 3. Insertion totals: Swift payload keys vs worker TOTAL_KINDS.
-    st, tk = set(swift_totals), set(total_kinds)
-    if st != tk:
-        if st - tk:
-            fail("`totals` payload sends kinds the worker drops "
-                 "(add to TOTAL_KINDS): " + ", ".join(sorted(st - tk)))
-        if tk - st:
-            fail("TOTAL_KINDS expects kinds the client never sends: "
-                 + ", ".join(sorted(tk - st)))
-        ok = False
-
-    # 4. Unique-install flags: usageFlags() keys vs worker USAGE_KINDS.
-    su, uk = set(swift_usage), set(usage_kinds)
-    if su != uk:
-        if su - uk:
-            fail("usageFlags() sends flags the worker drops (add to USAGE_KINDS): "
-                 + ", ".join(sorted(su - uk)))
-        if uk - su:
-            fail("USAGE_KINDS expects flags the client never sends: "
-                 + ", ".join(sorted(uk - su)))
-        ok = False
-
-    if not ok:
+    if failures:
+        for failure in failures:
+            fail(failure)
         return 1
 
-    not_published = [k for k in ingest if k not in pk]
-    print(f"✓ telemetry in sync — {len(ingest)} feature keys "
-          f"({len(public)} published), {len(total_kinds)} insertion totals, "
-          f"{len(usage_kinds)} usage flags")
-    if not_published:
-        print(f"  note: ingested but not on the public page: {', '.join(not_published)}")
+    print("✓ fork telemetry disabled — no recording, upload, consent prompt, or telemetry endpoint")
     return 0
 
 

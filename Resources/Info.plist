@@ -36,9 +36,5 @@
 	<string>© 2026 Wells Workshop LLC</string>
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
-	<key>SUFeedURL</key>
-	<string>https://mojito.wells.ee/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>NUW/cpxaKEqfwn2Uca4Zz9n01EmxhN0RRwhdma8GIuM=</string>
 </dict>
 </plist>

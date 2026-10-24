@@ -56,3 +56,9 @@ __pycache__/
 Sources/Mojito/GifPicker/EmbeddedKlipyKey.swift
 # Pre-KLIPY generated key file; ignored (and excluded in project.yml) so a stale local copy is neither committed nor compiled.
 Sources/Mojito/GifPicker/EmbeddedGiphyKey.swift
+
+# Local-only setup and imported personal history
+PERSONAL-BUILD.txt
+scripts/build-personal.sh
+scripts/import-personal-history.py
+scripts/personal-packages.resolved

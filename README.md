@@ -1,80 +1,55 @@
-<h1 align="center"><img width="50" alt="Mojito icon" align="center" src="https://github.com/user-attachments/assets/cbcd17f9-17f3-4afc-a24a-c48d4c4fdb95" /> Mojito</h1>
+# Spritz
 
-<p align="center">
-  <strong>Autocomplete <code>:emoji:</code> everywhere on your Mac.</strong><br>
-  Type <code>:</code> to search any emoji, symbol, or GIF in seconds.
-</p>
+A macOS emoji picker with **one-key selection**, a small row near your typing position, and persistent mnemonic letters. This is an independent fork of [Mojito by Wells Riley](https://github.com/wr/mojito), based on v1.10.1.
 
-<p align="center">
-  <a href="https://mojito.wells.ee/download?ref=github&at=readme"><strong>Download for macOS</strong></a> ⬪
-  <a href="https://mojito.wells.ee">Website</a> ⬪
-  <a href="#privacy">Privacy</a> ⬪
-  <a href="#donate">Donate</a>
-</p>
+## What changed
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/demo-dark.gif">
-    <img src="docs/demo-light.gif" width="100%" alt="Mojito's picker expanding emoji shortcodes in iMessage and Terminal">
-  </picture>
-</p>
+- Open the picker, then press a visible number or letter to insert its emoji immediately.
+- Up to eight numbered favourites keep their assignments. Other emoji receive persistent letters, preferring memorable matches such as **h** for ❤️ and **p** for 🏴‍☠️ when available.
+- Most used, Recent and All views retain your full history. New installations open All until there is usage history.
+- Context suggestions use local keyword matching. They never send surrounding text to a service.
+- A small numbered companion row appears near the text caret when the app exposes it. Otherwise placement uses an approximate window-based fallback.
+- Click Search to type a query; arrows and Return still navigate and insert. Escape closes the picker.
 
-## Install
+Letters belong to emoji, not grid positions. Two emoji may share a letter on **different pages**, but never on the same visible page. Usage and context can change an emoji's position or page. Numbers remain fixed once assigned. No multi-letter sequences are required.
 
-[Download the DMG](https://mojito.wells.ee/download?ref=github&at=readme) and drag Mojito to Applications, or use Homebrew:
+## Preview release
 
-```bash
-brew install --cask wr/tap/mojito
+This is a **source preview**, not a notarized app distribution. There is no downloadable installer for this fork yet. The upstream website and Homebrew cask install the original Mojito, without these changes.
+
+Requires macOS 14 or later to run, and Xcode 26 or later to build the Icon Composer assets. Build and test with:
+
+```sh
+git clone https://github.com/todd866/spritz.git
+cd spritz
+scripts/build-fork.sh test
+scripts/build-fork.sh build
 ```
 
-Free and open source. Requires macOS 14 or later. On first launch Mojito walks you through granting Accessibility and Input Monitoring, and it updates itself from then on.
+The app is built at `~/Library/Caches/MojitoFork/Derived/Build/Products/Debug/Spritz Dev.app`. The script uses ad-hoc signing and does not install or launch it. For repeated local development, supply a persistent signing identity via an `xcodebuild` override so macOS permissions can survive rebuilds.
 
-## Use it
+The fork uses `io.github.todd866.Spritz` / `.dev` bundle identities. It needs its own Accessibility and Input Monitoring permissions. Run only one emoji picker at a time to avoid competing shortcuts. No private signing credentials or API keys are included.
 
-| Type | To get |
-|---|---|
-| `:tada` | 🎉 Emoji, using the Slack and GitHub shortcodes you already know |
-| `::cmd` | ⌘ Symbols: arrows, math, currency, and more |
-| `:::cats` | GIFs from KLIPY, pasted where you're typing |
-| `:?` | Your favorite and most-used emoji |
+## Fn / Globe setup
 
-Arrow keys pick, Return or Tab inserts, Esc dismisses. Type the closing colon (`:heart:`) to skip the picker. Every trigger is customizable in Settings.
+Set an Emoji Browser shortcut in General settings. Mojito also provides a “Press Globe key to open Mojito” option. If a keyboard or macOS configuration does not reliably deliver that event, map a **tap** of Fn to your browser shortcut with Karabiner-Elements, keeping a held Fn unchanged. This fork does not modify Karabiner or system settings automatically.
 
-- **Learns your favorites:** results re-rank by what you pick.
-- **Your skin tone, every time:** set a default once.
-- **Emoticons convert too:** `:D` → 😃, `<3` → ❤️, `->` → →.
-- **Custom aliases:** make `:fart` mean 💨.
-- **Works in every app:** and skips the ones with their own shortcodes (Slack, Discord, Notion, GitHub), plus terminals and code editors. Edit the list in Settings → Exclusions.
-- **Speaks 19 languages:** with localized shortcodes in 14 of them, so `:fuego` works in Spanish.
+A tested setup uses Control–Option–Space as the browser shortcut and maps an Fn tap to it. Test insertion in a normal text field after granting permissions.
 
-## Privacy
+## Privacy and updates
 
-What you type stays on your Mac.
+Emoji counts, recent choices and key assignments stay in local preferences. Surrounding-text suggestions read a short preceding range from supported non-password fields; the transient context expires and is not written to disk or sent over the network. Some apps do not expose a caret or text context, so placement and suggestions vary by app.
 
-- Keystrokes are never logged or uploaded, and password fields are ignored.
-- After `:::`, only your search words and country go to KLIPY.
-- Anonymous daily usage counts help guide what gets built. You're asked once, can opt out anytime, and the whole dataset is public at [mojito.wells.ee/stats](https://mojito.wells.ee/stats).
+The fork disables telemetry collection/upload and automatic updates to the upstream app. “Check now” opens this fork's GitHub releases. Optional GIF search requires your own KLIPY API key and sends GIF search terms to KLIPY; emoji selection needs no network connection.
 
-Full details: [mojito.wells.ee/privacy](https://mojito.wells.ee/privacy).
+Your Apple emoji history is not imported automatically. No developer's personal emoji history or preference exports are included.
 
-## Translations
+## Contributing
 
-Corrections from native speakers are very welcome. The non-English strings started as LLM drafts.
+Report issues and propose improvements in [this fork](https://github.com/todd866/spritz/issues). Useful next steps include editable key bindings, better caret placement across apps, keyboard page navigation, and a signed/notarized distribution. Keep changes focused and include tests for selection, persistence and collisions.
 
-Edit `Resources/Localizable.xcstrings` (Xcode's catalog editor or the raw JSON) and open a pull request. Keep `%@` / `%lld` placeholders, `**Markdown**`, and backticked samples like `` `:tada:` `` exactly as they appear in the source. Preview a locale without changing your system language:
+## Credits and licence
 
-```bash
-scripts/run-locale.sh fr
-```
+Original Mojito © 2026 Wells Riley. Fork modifications © 2026 Ian Todd. Modified October 2026. Licensed under [GNU AGPL v3](LICENSE); the original licence and attribution are retained.
 
-## Donate
-
-Mojito is free, with no trial, ads, or upsells. If it saves you time, [buy me a coffee](https://buymeacoffee.com/wellsworkshop).
-
-## Credits
-
-emojibase, [Emoogle](https://github.com/xitanggg/emoogle-emoji-search-engine), Sparkle, KeyboardShortcuts, KLIPY, and a Swift port of fzy.
-
-## License
-
-[AGPL-3.0](LICENSE). © 2026 Wells Riley.
+Mojito builds on emojibase, [Emoogle](https://github.com/xitanggg/emoogle-emoji-search-engine), Sparkle, KeyboardShortcuts, KLIPY, and a Swift port of fzy. To support the original author, see [Wells Workshop](https://buymeacoffee.com/wellsworkshop).

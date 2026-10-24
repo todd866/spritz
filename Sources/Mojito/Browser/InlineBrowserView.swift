@@ -44,10 +44,18 @@ struct InlineBrowserView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchHeader
+            modeBar
             hairline
-            grid
+            if !editableSearch && !browser.searchInputActive {
+                shortcutGrid
+            } else {
+                grid
+            }
         }
         .frame(width: BrowserLayout.width, height: BrowserLayout.height)
+        .onChange(of: browser.query) { _, value in
+            if editableSearch && typedQuery != value { typedQuery = value }
+        }
         // Tooltip drawn at the root so it can sit above the top row without
         // being clipped by the scroll view. Clamps to the panel using the
         // bubble's measured width and flips below near the search row, so long
@@ -59,7 +67,7 @@ struct InlineBrowserView: View {
                     let margin: CGFloat = 6
                     let halfW = tooltipSize.width / 2
                     let x = min(max(cell.midX, halfW + margin), proxy.size.width - halfW - margin)
-                    let fitsAbove = cell.minY - margin - tooltipSize.height >= Self.searchRowHeight + 4
+                    let fitsAbove = cell.minY - margin - tooltipSize.height >= Self.searchRowHeight + 34 + 4
                     let y = fitsAbove
                         ? cell.minY - margin - tooltipSize.height / 2
                         : cell.maxY + margin + tooltipSize.height / 2
@@ -74,6 +82,30 @@ struct InlineBrowserView: View {
             }
             .allowsHitTesting(false)
         }
+    }
+
+    // Plain buttons share the existing non-key panel's click behaviour;
+    // the familiar segmented shape does not require moving text focus.
+    private var modeBar: some View {
+        HStack(spacing: 2) {
+            ForEach(browser.availableModes) { mode in
+                Button { browser.selectMode(mode) } label: {
+                    Text(mode.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 25)
+                        .background(RoundedRectangle(cornerRadius: 5)
+                            .fill(browser.mode == mode ? Color.pickerSelection : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(browser.mode == mode ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.05)))
+        .padding(.horizontal, 10)
+        .frame(height: 34)
     }
 
     private var hairline: some View {
@@ -97,11 +129,11 @@ struct InlineBrowserView: View {
                 // so the caret marks where typing starts.
                 ZStack(alignment: .leading) {
                     if browser.query.isEmpty {
-                        Text(String(localized: "Type to search emoji")).foregroundStyle(.tertiary)
+                        Text("Search emoji").foregroundStyle(.secondary)
                     }
                     HStack(spacing: 0) {
                         Text(browser.query).foregroundStyle(.primary)
-                        caret
+                        if browser.searchInputActive { caret }
                     }
                 }
             }
@@ -117,6 +149,7 @@ struct InlineBrowserView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             if editableSearch { searchFieldFocused = true }
+            else { browser.beginSearch() }
         }
     }
 
@@ -146,14 +179,47 @@ struct InlineBrowserView: View {
     /// tab bar insets the bottom safe area: content scrolls *under* it (so emoji
     /// blur through it) while `scrollTo` keeps keyboard-selected cells above it
     /// instead of leaving them hidden behind it.
+    private var shortcutGrid: some View {
+        VStack(spacing: 0) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 32), spacing: 3), count: EmojiBrowserViewModel.shortcutColumns), spacing: Self.rowSpacing) {
+                ForEach(Array(browser.shortcutItems.enumerated()), id: \.element.id) { index, item in
+                    BrowserCell(emoji: item.emoji, index: index,
+                                isKeyboardSelected: index == browser.shortcutSelectedIndex,
+                                cellHeight: Self.cellHeight, shortcut: String(item.key),
+                                onPick: onPick, onHoverChanged: { value in
+                                    if let value { browser.shortcutSelectedIndex = value }
+                                })
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 2)
+            Spacer(minLength: 0)
+            if browser.shortcutPageCount > 1 {
+                HStack(spacing: 16) {
+                    Button { browser.changeShortcutPage(by: -1) } label: { Image(systemName: "chevron.left") }
+                        .disabled(browser.shortcutPageIndex == 0)
+                        .accessibilityLabel("Previous emoji page")
+                    Text("\(browser.shortcutPageIndex + 1) / \(browser.shortcutPageCount)")
+                        .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                    Button { browser.changeShortcutPage(by: 1) } label: { Image(systemName: "chevron.right") }
+                        .disabled(browser.shortcutPageIndex + 1 >= browser.shortcutPageCount)
+                        .accessibilityLabel("Next emoji page")
+                }
+                .buttonStyle(.borderless)
+                .frame(height: 28)
+            }
+            if browser.mode == .all { categoryBar }
+        }
+    }
+
     private var grid: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                if browser.isSearching && browser.current.isEmpty {
+                if browser.current.isEmpty {
                     emptyResults
                 } else {
                     LazyVGrid(columns: columns, spacing: Self.rowSpacing) {
-                        if browser.isSearching {
+                        if !browser.showsCategories {
                             // Positional index is the identity here — it's what
                             // `scrollTo` (reset-to-top, keyboard nav) addresses.
                             ForEach(Array(browser.current.enumerated()), id: \.offset) { index, emoji in
@@ -177,11 +243,13 @@ struct InlineBrowserView: View {
                     // modes distinct grid identity so the library→search switch
                     // rebuilds instead of reusing the most-used row's cells for
                     // the first search render (the "garbage first search" bug).
-                    .id(browser.isSearching)
+                    .id("\(browser.mode.rawValue)-\(browser.isSearching)")
                 }
             }
             .contentMargins(.top, 2, for: .scrollContent)
-            .safeAreaInset(edge: .bottom, spacing: 0) { categoryBar }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if browser.mode == .all { categoryBar }
+            }
             .coordinateSpace(name: Self.scrollSpace)
             // Active tab follows the scroll position.
             .onPreferenceChange(SectionOffsetKey.self) { offsets in
@@ -237,7 +305,7 @@ struct InlineBrowserView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 22))
                 .foregroundStyle(.tertiary)
-            Text(String(localized: "No emoji matching “\(browser.query)”"))
+            Text(browser.isSearching ? String(localized: "No emoji matching “\(browser.query)”") : "No history yet")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
         }
@@ -270,6 +338,7 @@ private struct BrowserCell: View {
     let index: Int
     let isKeyboardSelected: Bool
     let cellHeight: CGFloat
+    var shortcut: String? = nil
     let onPick: (Emoji) -> Void
     let onHoverChanged: (Int?) -> Void
 
@@ -282,14 +351,24 @@ private struct BrowserCell: View {
         let highlighted = isKeyboardSelected || hovered
         Text(glyph)
             .font(.system(size: 25))  // match the pill's glyph size
+            .lineLimit(1)
+            .minimumScaleFactor(0.65)
             .frame(maxWidth: .infinity)
             .frame(height: cellHeight)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(highlighted ? Color.pickerSelection : Color.clear)
             )
+            .overlay(alignment: .topLeading) {
+                if let shortcut {
+                    Text(verbatim: shortcut)
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 2)
+                }
+            }
             .contentShape(Rectangle())
-            .accessibilityLabel(Text(verbatim: emoji.label))
+            .accessibilityLabel(Text(verbatim: shortcut.map { "\($0), \(emoji.label)" } ?? emoji.label))
             .anchorPreference(key: TooltipAnchorKey.self, value: .bounds) { anchor in
                 showTooltip ? TooltipData(text: ":\(emoji.primaryShortcode):", anchor: anchor) : nil
             }
@@ -375,27 +454,19 @@ private struct CategoryTabBar: View {
 /// touch darker over light ones, like the system field.
 private struct SearchFieldChrome: ViewModifier {
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content.glassEffect(.regular, in: .capsule)
-        } else {
-            content
-                .background(Capsule().fill(Color.primary.opacity(0.05)))
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1)))
-        }
+        content
+            .background(Capsule().fill(Color.primary.opacity(0.05)))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1)))
     }
 }
 
-/// The tab bar's strip. On Tahoe it's clear glass, which blurs the emoji
-/// passing under it into soft colour blobs as in the system picker. Regular
-/// glass, materials and the hard scroll-edge effect all hide them; a
-/// partly transparent layer leaves crisp ghost emoji instead.
+/// Opaque enough to keep scrolling glyphs from competing with tab icons.
 private struct TabBarBackground: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content.glassEffect(.clear, in: .rect)
-        } else {
-            content.background(.ultraThinMaterial)
-        }
+        content.background(colorScheme == .dark
+            ? Color(red: 0.13, green: 0.13, blue: 0.14)
+            : Color(red: 0.96, green: 0.96, blue: 0.97))
     }
 }
 

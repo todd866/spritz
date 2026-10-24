@@ -89,17 +89,17 @@ struct PrivacyDetailsRows: View {
         privacyRow(
             icon: "keyboard",
             title: "Keystrokes aren't logged",
-            detail: "Used to detect `:` triggers. Nothing else."
+            detail: "Keyboard input selects emoji. Context suggestions read nearby text locally."
         )
         privacyRow(
             icon: "eye.slash",
-            title: "You are anonymous",
-            detail: "Statistics and GIF searches sent to KLIPY are never linked to you, and no personally-identifiable data is stored or sent anywhere."
+            title: "Local emoji history",
+            detail: "Emoji history and suggestions stay on your Mac. GIF search terms go to KLIPY."
         )
         privacyRow(
             icon: "dollarsign.circle",
-            title: "Funded by donations",
-            detail: "No ads, tracking, or subscriptions."
+            title: "Support original Mojito",
+            detail: "Original Mojito is made by Wells Riley."
         ) {
             Button("Donate") {
                 NSWorkspace.shared.open(URL(string: "https://buymeacoffee.com/wellsworkshop")!)
@@ -111,7 +111,7 @@ struct PrivacyDetailsRows: View {
             detail: "All the code is on GitHub. Read it, build it, fork it."
         ) {
             Button("View source") {
-                NSWorkspace.shared.open(URL(string: "https://github.com/wr/mojito")!)
+                NSWorkspace.shared.open(URL(string: "https://github.com/todd866/spritz")!)
             }
         }
     }
@@ -148,7 +148,6 @@ struct PrivacyDetailsRows: View {
 /// Surfaced by the onboarding permissions step.
 struct PrivacyDetailsSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @AppStorage(PrefsKey.telemetryEnabled) private var telemetryEnabled: Bool = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -170,14 +169,6 @@ struct PrivacyDetailsSheet: View {
 
                 Form {
                     PrivacyDetailsRows()
-
-                    Toggle(isOn: $telemetryEnabled) {
-                        HStack(spacing: 4) {
-                            Text("Share anonymous usage stats")
-                            StatsHelpButton()
-                        }
-                    }
-                    .toggleStyle(.switch)
                 }
                 .formStyle(.grouped)
                 .scrollDisabled(true)
@@ -192,10 +183,5 @@ struct PrivacyDetailsSheet: View {
             .padding(.vertical, 14)
         }
         .frame(width: 500, height: 560)
-        .onAppear {
-            // Seeing the privacy sheet (with the stats toggle + anonymity
-            // explanation) satisfies the one-time stats-consent gate.
-            UserDefaults.standard.set(true, forKey: PrefsKey.telemetryConsentSeen)
-        }
     }
 }

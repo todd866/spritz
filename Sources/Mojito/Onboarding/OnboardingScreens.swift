@@ -556,7 +556,6 @@ struct DoneStep: View {
     @AppStorage(PrefsKey.skinTone) private var skinToneRaw: String = SkinTone.default.rawValue
     @AppStorage(PrefsKey.replaceSystemEmojiPickerEnabled) private var replacePicker: Bool = false
     @AppStorage(PrefsKey.launchAtLogin) private var launchAtLogin: Bool = false
-    @State private var autoUpdates: Bool = UpdaterCoordinator.shared.automaticUpdates
     @State private var replaceNeedsLogout = false
     @State private var tryItText = ""
     @FocusState private var tryItFocused: Bool
@@ -621,12 +620,6 @@ struct DoneStep: View {
                 }
 
                 Section {
-                    Toggle("Automatic updates", isOn: $autoUpdates)
-                        .toggleStyle(.switch)
-                        .onChange(of: autoUpdates) { _, newValue in
-                            UpdaterCoordinator.shared.automaticUpdates = newValue
-                        }
-
                     Toggle("Start at login", isOn: $launchAtLogin)
                         .toggleStyle(.switch)
                         .onChange(of: launchAtLogin) { _, newValue in

@@ -121,6 +121,7 @@ enum TriggerAction: Equatable {
     /// Enter / click in the browser — insert the selected emoji. `keepOpen`
     /// (Shift held) leaves the grid up for further picks.
     case pickBrowser(keepOpen: Bool)
+    case pickBrowserShortcut(key: Character)
     /// Close the browser grid (esc, click-away).
     case closeBrowser
     /// Grow the favorites pill into the full browser grid (↓/↑ on the pill).
@@ -766,7 +767,14 @@ struct TriggerStateMachine {
 
     /// Engine calls this when the pill's Browse row (or the menu) opens the
     /// full grid: hand the keyboard to the browser.
+    private(set) var browserSearchInputActive = false
+
+    mutating func setBrowserSearchInputActive(_ active: Bool) {
+        browserSearchInputActive = active
+    }
+
     mutating func enterBrowsing(query: String) {
+        browserSearchInputActive = !query.isEmpty
         state = .browsing(query: query)
         emptyPickerActive = false
         konamiProgress = 0
@@ -793,6 +801,7 @@ struct TriggerStateMachine {
     }
 
     mutating func reset() {
+        browserSearchInputActive = false
         state = .idle
         capturedMode = .emoji
         capturedOpenLen = 0
@@ -1122,15 +1131,20 @@ struct TriggerStateMachine {
         guard case .browsing(let q) = state else { return .passthrough }
         switch input {
         case .nameChar(let c):
+            if !browserSearchInputActive {
+                return TriggerOutput(action: .pickBrowserShortcut(key: c), consumesKey: true)
+            }
             let next = q + String(c)
             state = .browsing(query: next)
             return TriggerOutput(action: .refreshBrowser(query: next), consumesKey: true)
         case .cancelChar(let c):
+            guard browserSearchInputActive else { return .consume }
             // Spaces + punctuation are valid in emoji labels ("smiling face").
             let next = q + String(c)
             state = .browsing(query: next)
             return TriggerOutput(action: .refreshBrowser(query: next), consumesKey: true)
         case .colon:
+            guard browserSearchInputActive else { return .consume }
             let next = q + ":"
             state = .browsing(query: next)
             return TriggerOutput(action: .refreshBrowser(query: next), consumesKey: true)

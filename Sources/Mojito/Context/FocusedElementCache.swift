@@ -31,6 +31,12 @@ final class FocusedElementCache {
         }
     }
 
+    /// Best-effort frame of the active app's usable main window, in AppKit
+    /// screen coordinates. This is only an anchor fallback: it is deliberately
+    /// separate from `element`, because some apps report their window as the
+    /// focused element even while a text field has focus.
+    private(set) var activeWindowFrame: CGRect?
+
     /// Bumped on every `element` change so a queued off-thread reclassify can bail
     /// before its (up to `seedTimeout`) AX round-trips instead of piling up a
     /// serial backlog under a focus storm. Lock-protected so `reclassify` can read
@@ -116,6 +122,10 @@ final class FocusedElementCache {
     /// process-wide 0.5s: a stale seed is discarded by the generation check
     /// anyway, so waiting long for a slow app buys nothing.
     private static let seedTimeout: Float = 0.25
+    /// Window geometry is only a fallback anchor. Keep its best-effort AX
+    /// reads much tighter than field classification so a slow app cannot add
+    /// visible latency to opening the picker.
+    private static let windowTimeout: Float = 0.02
 
     /// Backoff for re-seeding while the seed comes back empty (~25s total). A
     /// cold-launching app (Slack right after `open`) answers every AX call with
@@ -165,6 +175,7 @@ final class FocusedElementCache {
 
         guard let app = NSWorkspace.shared.frontmostApplication else {
             element = nil
+            activeWindowFrame = nil
             focusedPID = nil
             seedInFlight = false
             onFocusChange?()
@@ -172,6 +183,7 @@ final class FocusedElementCache {
         }
         let pid = app.processIdentifier
         element = nil
+        activeWindowFrame = nil
         focusedPID = pid
         DebugRecorder.record(.focus, "app", ["bundleID": app.bundleIdentifier ?? "—"])
         onFocusChange?()
@@ -262,16 +274,34 @@ final class FocusedElementCache {
             seeded = (ref as! AXUIElement)
         }
 
+        // A few apps return their AXWindow as the focused element. Resolve one
+        // nested focused element while the seed timeout is already in force so
+        // caret lookup does not mistake a 64pt utility window for a text field.
+        if let seededElement = seeded, Self.role(of: seededElement, timeout: Self.windowTimeout) == "AXWindow",
+           let nested = Self.focusedChild(of: seededElement, timeout: Self.windowTimeout) {
+            seeded = nested
+        }
+
         // Chromium/Electron apps (Slack, VS Code, Discord…) gate their AX tree
         // behind AXManualAccessibility: until a client sets it the app exposes
         // no focused element, so every trigger fails closed as "unknown →
-        // secure" (W-572). Only flip it when the read above came back empty —
-        // native apps hand back a focused element and never reach here, so we
-        // never touch them. Chromium builds the tree asynchronously, so an
-        // empty seed is retried (see `seedRetryDelays`).
-        if seeded == nil {
-            AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        // secure" (W-572). A placeholder AXWindow also needs this backstop.
+        // Unsupported native apps simply reject the attribute. Chromium builds
+        // the tree asynchronously, so a bounded background retry follows.
+        let opaqueWindow = seeded.map { Self.role(of: $0, timeout: Self.windowTimeout) == "AXWindow" } ?? false
+        var richTreePending = false
+        if seeded == nil || opaqueWindow {
+            AXUIElementSetMessagingTimeout(axApp, Self.windowTimeout)
+            let enabled = AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            // Some Electron apps expose a placeholder window, rather than nil,
+            // before their accessibility tree is enabled. Retry briefly off-thread.
+            richTreePending = opaqueWindow && enabled == .success && attempt < 2
         }
+
+        // Cache a usable app window while AX is already warm. Never use the
+        // tiny utility/auxiliary window that some apps expose first; prefer
+        // AXMainWindow, then the largest of a bounded window list.
+        let windowFrame = Self.usableWindowFrame(of: axApp, timeout: Self.windowTimeout)
 
         // Classify while we're already off the main thread and holding the app's
         // tight timeout, so `current()` (on the tap thread) reads it for free.
@@ -296,7 +326,7 @@ final class FocusedElementCache {
                     DebugRecorder.record(.focus, "seed", diag)
                 }
                 self.install(
-                    seeded: seeded, fieldInfo: fieldInfo,
+                    seeded: seeded, fieldInfo: fieldInfo, windowFrame: windowFrame, richTreePending: richTreePending,
                     observer: observer, pid: pid, attempt: attempt
                 )
             }
@@ -311,6 +341,8 @@ final class FocusedElementCache {
     private func install(
         seeded: AXUIElement?,
         fieldInfo: (secure: Bool, editable: Bool, role: String?)?,
+        windowFrame: CGRect?,
+        richTreePending: Bool,
         observer: AXObserver?,
         pid: pid_t,
         attempt: Int
@@ -320,6 +352,7 @@ final class FocusedElementCache {
         // in the meantime.
         if seeded != nil || attempt == 0 {
             element = seeded                              // didSet clears field info
+            activeWindowFrame = windowFrame.map(Self.convertAXWindowFrame)
             if let fieldInfo {                            // then publish this seed's classification
                 publishFieldInfo(secure: fieldInfo.secure, editable: fieldInfo.editable, role: fieldInfo.role)
             }
@@ -337,7 +370,7 @@ final class FocusedElementCache {
             onSeedInstalled?()
         }
 
-        if element == nil, attempt < Self.seedRetryDelays.count {
+        if (element == nil || richTreePending), attempt < Self.seedRetryDelays.count {
             let generation = refreshGeneration.withLock { $0 }
             let registerObserver = self.observer == nil
             seedInFlight = true
@@ -345,6 +378,70 @@ final class FocusedElementCache {
                 self.seed(pid: pid, generation: generation, attempt: attempt + 1, registerObserver: registerObserver)
             }
         }
+    }
+
+    private nonisolated static func usableWindowFrame(of app: AXUIElement, timeout: Float) -> CGRect? {
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.08
+        AXUIElementSetMessagingTimeout(app, timeout)
+        var mainRef: AnyObject?
+        _ = AXUIElementCopyAttributeValue(app, kAXMainWindowAttribute as CFString, &mainRef)
+        var candidates: [AXUIElement] = []
+        if let mainRef, CFGetTypeID(mainRef) == AXUIElementGetTypeID() { candidates.append(mainRef as! AXUIElement) }
+        // AXMainWindow is the least surprising anchor. Only inspect the
+        // bounded window list when it is absent or unusable.
+        if let main = candidates.first, let frame = Self.usableFrame(of: main, timeout: timeout) { return frame }
+        guard ProcessInfo.processInfo.systemUptime < deadline else { return nil }
+        var windowsRef: AnyObject?
+        _ = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef)
+        if let windows = windowsRef as? [AXUIElement] { candidates = Array(windows.prefix(8)) }
+        var best: CGRect?
+        for window in candidates {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { break }
+            AXUIElementSetMessagingTimeout(window, timeout)
+            var roleRef: AnyObject?
+            _ = AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &roleRef)
+            if let role = roleRef as? String, role != "AXWindow" { continue }
+            guard let frame = Self.usableFrame(of: window, timeout: timeout) else { continue }
+            if best == nil || frame.width * frame.height > best!.width * best!.height { best = frame }
+        }
+        return best
+    }
+
+    private nonisolated static func role(of element: AXUIElement, timeout: Float) -> String? {
+        AXUIElementSetMessagingTimeout(element, timeout)
+        var ref: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &ref) == .success else { return nil }
+        return ref as? String
+    }
+
+    private nonisolated static func focusedChild(of window: AXUIElement, timeout: Float) -> AXUIElement? {
+        var ref: AnyObject?
+        guard AXUIElementCopyAttributeValue(window, kAXFocusedUIElementAttribute as CFString, &ref) == .success,
+              let ref, CFGetTypeID(ref) == AXUIElementGetTypeID() else { return nil }
+        let child = ref as! AXUIElement
+        AXUIElementSetMessagingTimeout(child, timeout)
+        return child
+    }
+
+    private nonisolated static func usableFrame(of element: AXUIElement, timeout: Float) -> CGRect? {
+        AXUIElementSetMessagingTimeout(element, timeout)
+        var posRef: AnyObject?
+        var sizeRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let posRef, let sizeRef else { return nil }
+        var origin = CGPoint.zero
+        var size = CGSize.zero
+        guard CFGetTypeID(posRef) == AXValueGetTypeID(), CFGetTypeID(sizeRef) == AXValueGetTypeID(),
+              AXValueGetValue(posRef as! AXValue, .cgPoint, &origin), AXValueGetValue(sizeRef as! AXValue, .cgSize, &size),
+              size.width >= 240, size.height >= 120 else { return nil }
+        return CGRect(origin: origin, size: size)
+    }
+
+    @MainActor
+    private static func convertAXWindowFrame(_ frame: CGRect) -> CGRect {
+        guard let primary = NSScreen.screens.first else { return frame }
+        return CGRect(x: frame.minX, y: primary.frame.height - frame.minY - frame.height, width: frame.width, height: frame.height)
     }
 
     private func teardownObserver() {

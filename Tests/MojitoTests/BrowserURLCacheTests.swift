@@ -152,7 +152,7 @@ struct BrowserURLCacheTests {
         let cache = makeCache(spy: spy, clock: clock, minRefreshInterval: 1.0)
 
         _ = cache.url(forBundleID: Self.arc, pid: 42)
-        #expect(try await settle { spy.calls == 1 })
+        #expect(try await settle { cache.url(forBundleID: Self.arc, pid: 42) == URL(string: "https://a.example") })
 
         // Within the throttle window: read again, no new resolve, still serving A.
         clock.now += 0.5

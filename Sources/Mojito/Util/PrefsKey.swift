@@ -26,6 +26,7 @@ enum PrefsKey {
     static let exclusionMode         = "mojito.exclusions.mode"      // String, ExclusionMode raw
     static let allowedBundleIDs      = "mojito.allowBundleIDs"       // [String]
     static let allowedURLPatterns    = "mojito.allowURLPatterns"     // [String]
+    static let recentEmoji = "mojito.recentEmoji" // newest-first hexcode list
     static let usageCounts           = "mojito.usageCounts"          // [String: Int]  (hexcode → count)
     /// User-defined shortcodes that resolve to an emoji. JSON-encoded
     /// `[CustomAlias]` (alias string → hexcode). Additive on top of the baked
