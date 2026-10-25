@@ -2,16 +2,18 @@
 
 A macOS emoji picker with **one-key selection** and persistent mnemonic letters. This is an independent fork of [Mojito by Wells Riley](https://github.com/wr/mojito), based on v1.10.1.
 
+![Spritz picker with number keys 1–0 and letters a–z](docs/picker.png)
+
 ## What changed
 
 - Open the picker, then press a visible number or letter to insert its emoji immediately.
-- Number keys 1–9 and 0 keep their assignments. Other emoji receive persistent letters, preferring memorable matches such as **h** for ❤️ and **p** for 🏴‍☠️ when available.
+- Number keys 1–9 and 0 sit on the first row. Letters a–z sit in alphabetical slots underneath. A fresh install fills empty letters with memorable matches, such as **h** for ❤️, when one is free.
 - Most used, Recent and All views retain your full history. New installations open All until there is usage history.
 - Context suggestions use local keyword matching. They never send surrounding text to a service.
 - The picker opens near the text caret when the app exposes it. Otherwise placement uses an approximate window-based fallback.
 - Click Search to type a query; arrows and Return still navigate and insert. Escape closes the picker.
 
-Letters belong to emoji, not grid positions. Two emoji may share a letter on **different pages**, but never on the same visible page. Usage and context can change an emoji's position or page. Numbers remain fixed once assigned. No multi-letter sequences are required.
+Drag an emoji onto a number or letter to take that key. Drag it onto empty space to clear the key. A cleared slot stays empty, and the other keys do not move. The same letter shows its emoji on Most used, Recent and All. Emoji without a key fill the rest of the grid. No multi-letter sequences are required.
 
 ## Preview release
 
@@ -46,7 +48,7 @@ Your Apple emoji history is not imported automatically. No developer's personal 
 
 ## Contributing
 
-Report issues and propose improvements in [this fork](https://github.com/todd866/spritz/issues). Useful next steps include editable key bindings, better caret placement across apps, keyboard page navigation, and a signed/notarized distribution. Keep changes focused and include tests for selection, persistence and collisions.
+Report issues and propose improvements in [this fork](https://github.com/todd866/spritz/issues). Useful next steps include better caret placement across apps and a signed, notarized download. Keep changes focused and include tests for selection, persistence and cleared slots.
 
 ## Credits and licence
 
