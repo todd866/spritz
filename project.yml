@@ -171,7 +171,7 @@ targets:
         # Required for the AppleScript fallback that reads Arc's active-tab URL
         # (Arc hides it from accessibility). Without this key macOS denies the
         # Apple event outright instead of prompting. Only Arc triggers it.
-        NSAppleEventsUsageDescription: "Mojito reads the current tab's URL in Arc to apply your per-site exclusions."
+        NSAppleEventsUsageDescription: "Spritz reads the current tab's URL in Arc to apply your per-site exclusions."
         SUEnableInstallerLauncherService: true
     settings:
       base:

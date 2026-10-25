@@ -163,9 +163,6 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             self.viewModel.browser?.select(emoji)
             self.pickFromBrowser(keepOpen: NSEvent.modifierFlags.contains(.shift))
         }
-        pickerWindow.onQuickPick = { [weak self] emoji in
-            self?.pickFromBrowser(override: emoji)
-        }
         viewModel.onBrowserCategory = { [weak self] category in
             guard let self else { return }
             // Switching category clears any in-progress search, so keep the
@@ -1162,17 +1159,21 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         }
     }
 
-    /// Establishes the 1–8 bindings on the first real browser open. Existing
+    /// Establishes the 1–0 bindings on the first real browser open. Existing
     /// bindings are never re-ranked; newly missing slots are appended from the
     /// current ranked fallback so a partial preference remains stable.
     private func persistNumberedSuggestions(_ suggestions: [Emoji]) {
         let defaults = UserDefaults.standard
+        let existing = defaults.stringArray(forKey: EmojiBrowserViewModel.numberedEmojiKey) ?? []
+        let cap = EmojiBrowserViewModel.numberSlotCount
+        // A full row, including blanks the user cleared, is already settled.
+        if existing.count >= cap { return }
         var unique = Set<String>()
-        var saved = (defaults.stringArray(forKey: EmojiBrowserViewModel.numberedEmojiKey) ?? [])
-            .filter { database.byHexcode[$0] != nil && unique.insert($0).inserted }
-        saved = Array(saved.prefix(8))
+        var saved = existing
+            .filter { ($0.isEmpty || database.byHexcode[$0] != nil) && ($0.isEmpty || unique.insert($0).inserted) }
+        saved = Array(saved.prefix(cap))
         var seen = Set(saved)
-        for emoji in suggestions where saved.count < 8 && seen.insert(emoji.hexcode).inserted {
+        for emoji in suggestions where saved.count < cap && seen.insert(emoji.hexcode).inserted {
             saved.append(emoji.hexcode)
         }
         guard defaults.stringArray(forKey: EmojiBrowserViewModel.numberedEmojiKey) != saved else { return }

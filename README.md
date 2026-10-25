@@ -1,14 +1,14 @@
 # Spritz
 
-A macOS emoji picker with **one-key selection**, a small row near your typing position, and persistent mnemonic letters. This is an independent fork of [Mojito by Wells Riley](https://github.com/wr/mojito), based on v1.10.1.
+A macOS emoji picker with **one-key selection** and persistent mnemonic letters. This is an independent fork of [Mojito by Wells Riley](https://github.com/wr/mojito), based on v1.10.1.
 
 ## What changed
 
 - Open the picker, then press a visible number or letter to insert its emoji immediately.
-- Up to eight numbered favourites keep their assignments. Other emoji receive persistent letters, preferring memorable matches such as **h** for ❤️ and **p** for 🏴‍☠️ when available.
+- Number keys 1–9 and 0 keep their assignments. Other emoji receive persistent letters, preferring memorable matches such as **h** for ❤️ and **p** for 🏴‍☠️ when available.
 - Most used, Recent and All views retain your full history. New installations open All until there is usage history.
 - Context suggestions use local keyword matching. They never send surrounding text to a service.
-- A small numbered companion row appears near the text caret when the app exposes it. Otherwise placement uses an approximate window-based fallback.
+- The picker opens near the text caret when the app exposes it. Otherwise placement uses an approximate window-based fallback.
 - Click Search to type a query; arrows and Return still navigate and insert. Escape closes the picker.
 
 Letters belong to emoji, not grid positions. Two emoji may share a letter on **different pages**, but never on the same visible page. Usage and context can change an emoji's position or page. Numbers remain fixed once assigned. No multi-letter sequences are required.

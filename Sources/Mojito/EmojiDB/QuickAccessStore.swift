@@ -133,12 +133,13 @@ enum EmojiLetterBindings {
     /// Resolve one-letter bindings for `candidates`, carrying forward valid
     /// entries in `saved`. The returned keys are canonicalised uppercase
     /// hexcodes and values are lowercase ASCII letters.
-    static func resolve(candidates: [Emoji], saved: [String: String]) -> [String: String] {
+    static func resolve(candidates: [Emoji], saved: [String: String], blocked: Set<Character> = []) -> [String: String] {
         var result: [String: String] = [:]
         // Sorting makes duplicate differently-cased saved keys deterministic.
         for key in saved.keys.sorted() {
             guard let canonical = canonicalHex(key),
-                  let letter = asciiLetter(saved[key] ?? "") else { continue }
+                  let letter = asciiLetter(saved[key] ?? ""),
+                  !blocked.contains(letter) else { continue }
             if result[canonical] == nil { result[canonical] = String(letter) }
         }
 
@@ -155,9 +156,9 @@ enum EmojiLetterBindings {
             let hex = canonicalHex(emoji.hexcode)!
             if result[hex] != nil { continue }
 
-            let choices = mnemonicChoices(for: emoji)
-            let minimum = choices.map { counts[$0, default: 0] }.min() ?? 0
-            let chosen = choices.first(where: { counts[$0, default: 0] == minimum })!
+            let choices = mnemonicChoices(for: emoji).filter { !blocked.contains($0) }
+            guard let minimum = choices.map({ counts[$0, default: 0] }).min(),
+                  let chosen = choices.first(where: { counts[$0, default: 0] == minimum }) else { continue }
             result[hex] = String(chosen)
             counts[chosen, default: 0] += 1
         }

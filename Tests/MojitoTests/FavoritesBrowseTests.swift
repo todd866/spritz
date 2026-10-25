@@ -413,9 +413,10 @@ struct PersonalBrowserTests {
                 ($0.element.hexcode, 100 - $0.offset)
             }), forKey: PrefsKey.usageCounts)
             let browser = model(defaults)
-            #expect(browser.shortcutItems.prefix(8).map(\.key) == Array("12345678"))
+            #expect(browser.shortcutItems.prefix(10).map(\.key) == Array("1234567890"))
             #expect(browser.emojiForShortcut("1")?.hexcode == browser.quickSuggestions.first?.hexcode)
-            #expect(browser.shortcutItems.count <= 34)
+            #expect(browser.emojiForShortcut("0")?.hexcode == browser.numberedSlots[9]?.hexcode)
+            #expect(browser.shortcutItems.count <= 36)
             for page in 0..<browser.shortcutPageCount {
                 if page > 0 { browser.changeShortcutPage(by: 1) }
                 let items = browser.shortcutItems
@@ -482,7 +483,7 @@ struct PersonalBrowserTests {
             defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map { ($0.element.hexcode, 100 - $0.offset) }), forKey: PrefsKey.usageCounts)
             let browser = model(defaults)
             let choices = browser.quickSuggestions.map(\.hexcode)
-            #expect(choices == Array(sample.prefix(8)).map(\.hexcode))
+            #expect(choices == Array(sample.prefix(EmojiBrowserViewModel.numberSlotCount)).map(\.hexcode))
             browser.setQuery("heart")
             browser.selectMode(.all)
             browser.selectMode(.recent)
@@ -584,6 +585,129 @@ struct PersonalBrowserTests {
             }
         }
     }
+    @Test func letterKeysReadAlphabeticallyUnderOneRowOfNumbers() {
+        withDefaults { defaults in
+            let sample = Array(EmojiDatabase.shared.all.prefix(12))
+            defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map {
+                ($0.element.hexcode, 100 - $0.offset)
+            }), forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            #expect(browser.pickerSlots.prefix(EmojiBrowserViewModel.numberSlotCount).map(\.shortcut) == ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"])
+            let letters = browser.pickerSlots.dropFirst(EmojiBrowserViewModel.numberSlotCount).compactMap { $0.shortcut }
+            #expect(letters == letters.sorted())
+            #expect(!letters.isEmpty)
+            #expect(browser.pickerSlots.count >= EmojiBrowserViewModel.minimumShortcutSlots)
+            #expect(browser.pickerSlots.dropFirst(EmojiBrowserViewModel.numberSlotCount + letters.count).contains { $0.shortcut == nil && $0.emoji != nil })
+        }
+    }
+
+    @Test func pickerFillsInEmojiThatHaveNoKey() {
+        withDefaults { defaults in
+            let sample = Array(EmojiDatabase.shared.all.prefix(40))
+            defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map {
+                ($0.element.hexcode, 100 - $0.offset)
+            }), forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            let shown = Set(browser.pickerSlots.compactMap { $0.emoji?.hexcode })
+            #expect(shown.isSuperset(of: Set(sample.map(\.hexcode))))
+            let letters = browser.pickerSlots.compactMap(\.shortcut).filter { $0.first?.isLetter == true }
+            #expect(Set(letters).count == letters.count)
+            #expect(browser.pickerSlots.contains { $0.emoji != nil && $0.shortcut == nil })
+        }
+    }
+
+    @Test func draggingOntoAnUnassignedEmojiClearsTheNumber() {
+        withDefaults { defaults in
+            let sample = Array(EmojiDatabase.shared.all.prefix(40))
+            defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map {
+                ($0.element.hexcode, 100 - $0.offset)
+            }), forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            let number = browser.pickerSlots.first { $0.shortcut == "1" }?.emoji
+            let unassigned = browser.pickerSlots.first { $0.shortcut == nil }?.emoji
+            let kept = browser.pickerSlots.prefix(EmojiBrowserViewModel.numberSlotCount).dropFirst().compactMap { slot -> (String, String)? in
+                guard let shortcut = slot.shortcut, let emoji = slot.emoji else { return nil }
+                return (shortcut, emoji.hexcode)
+            }
+            guard let number, let unassigned else { return }
+            browser.dropShortcut(from: number.hexcode, onto: unassigned.hexcode)
+            #expect(browser.emojiForShortcut("1") == nil)
+            #expect(browser.pickerSlots.first { $0.shortcut == "1" }?.emoji == nil)
+            #expect(browser.pickerSlots.contains { $0.emoji?.hexcode == number.hexcode && $0.shortcut == nil })
+            for (shortcut, hex) in kept {
+                #expect(browser.pickerSlots.first { $0.shortcut == shortcut }?.emoji?.hexcode == hex)
+            }
+            let reopened = model(defaults)
+            #expect(reopened.emojiForShortcut("1") == nil)
+            #expect(reopened.pickerSlots.first { $0.shortcut == "1" }?.emoji == nil)
+            for (shortcut, hex) in kept {
+                #expect(reopened.pickerSlots.first { $0.shortcut == shortcut }?.emoji?.hexcode == hex)
+            }
+        }
+    }
+
+    @Test func droppingInEmptySpaceClearsAndDroppingOnTheSameCellCancels() {
+        let flag = "1F1EE-1F1F3"
+        let frames: [String: CGRect] = [
+            flag: CGRect(x: 200, y: 160, width: 40, height: 40),
+            "1F602": CGRect(x: 0, y: 0, width: 40, height: 40),
+            "number-0": CGRect(x: 40, y: 0, width: 40, height: 40)
+        ]
+        #expect(ShortcutDrag.resolve(point: CGPoint(x: 220, y: 420), sourceHex: flag, frames: frames) == .unassign)
+        #expect(ShortcutDrag.resolve(point: CGPoint(x: 210, y: 180), sourceHex: flag, frames: frames) == .cancel)
+        #expect(ShortcutDrag.resolve(point: CGPoint(x: 16, y: 16), sourceHex: flag, frames: frames) == .emoji("1F602"))
+        #expect(ShortcutDrag.resolve(point: CGPoint(x: 55, y: 16), sourceHex: flag, frames: frames) == .number(9))
+    }
+
+    @Test func clearingALetterLeavesThatSlotEmptyAndKeepsTheOthers() {
+        withDefaults { defaults in
+            let sample = Array(EmojiDatabase.shared.all.prefix(40))
+            defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map {
+                ($0.element.hexcode, 100 - $0.offset)
+            }), forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            let letters = browser.pickerSlots.dropFirst(EmojiBrowserViewModel.numberSlotCount).prefix(26)
+            #expect(letters.map { $0.shortcut } == EmojiBrowserViewModel.letterKeys.map { String($0) })
+            guard let cleared = letters.first(where: { $0.emoji != nil }),
+                  let letter = cleared.shortcut?.first,
+                  let hex = cleared.emoji?.hexcode,
+                  let unassigned = browser.pickerSlots.first(where: { $0.shortcut == nil })?.emoji else { return }
+            let kept = letters.compactMap { slot -> (Character, String)? in
+                guard let key = slot.shortcut?.first, key != letter, let emoji = slot.emoji else { return nil }
+                return (key, emoji.hexcode)
+            }
+            browser.dropShortcut(from: hex, onto: unassigned.hexcode)
+            #expect(browser.pickerSlots.first { $0.shortcut == String(letter) }?.emoji == nil)
+            for (key, value) in kept {
+                #expect(browser.emojiForShortcut(key)?.hexcode == value)
+            }
+            let reopened = model(defaults)
+            #expect(reopened.pickerSlots.first { $0.shortcut == String(letter) }?.emoji == nil)
+            for (key, value) in kept {
+                #expect(reopened.emojiForShortcut(key)?.hexcode == value)
+            }
+            reopened.dropShortcut(from: unassigned.hexcode, ontoEmptyLetter: letter)
+            #expect(reopened.emojiForShortcut(letter)?.hexcode == unassigned.hexcode)
+        }
+    }
+
+    @Test func draggingOntoAKeyedEmojiTakesThatKey() {
+        withDefaults { defaults in
+            let sample = Array(EmojiDatabase.shared.all.prefix(40))
+            defaults.set(Dictionary(uniqueKeysWithValues: sample.enumerated().map {
+                ($0.element.hexcode, 100 - $0.offset)
+            }), forKey: PrefsKey.usageCounts)
+            let browser = model(defaults)
+            guard let letterSlot = browser.pickerSlots.first(where: { $0.shortcut?.first?.isLetter == true }),
+                  let letter = letterSlot.shortcut?.first,
+                  let target = letterSlot.emoji,
+                  let source = browser.pickerSlots.first(where: { $0.shortcut == nil })?.emoji else { return }
+            browser.dropShortcut(from: source.hexcode, onto: target.hexcode)
+            #expect(browser.emojiForShortcut(letter)?.hexcode == source.hexcode)
+            #expect(browser.emojiForShortcut(letter)?.hexcode == model(defaults).emojiForShortcut(letter)?.hexcode)
+        }
+    }
+
     @Test func freshInstallOpensCatalogueAndRecentStaysEmpty() {
         withDefaults { defaults in
             let browser = model(defaults)

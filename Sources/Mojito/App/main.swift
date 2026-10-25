@@ -28,14 +28,14 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
         previewDefaults.set(Dictionary(uniqueKeysWithValues: demo.enumerated().map { ($0.element, 100 - $0.offset) }), forKey: PrefsKey.usageCounts)
         previewDefaults.set(demo.reversed().map { $0 }, forKey: PrefsKey.recentEmoji)
         for dark in [false, true] {
-            for scenario in ["mostUsed", "recent", "all", "search", "emptySearch", "largeText", "paired", "suggested", "general", "privacy"] {
+            for scenario in ["mostUsed", "recent", "all", "search", "emptySearch", "largeText", "suggested", "general", "privacy"] {
                 let browser = EmojiBrowserViewModel(database: .shared, quickAccess: QuickAccessStore(defaults: previewDefaults), defaults: previewDefaults, contextText: scenario == "suggested" ? "happy birthday cake party" : nil)
                 if scenario == "recent" { browser.selectMode(.recent) }
                 if scenario == "all" { browser.selectMode(.all) }
                 if scenario == "search" { browser.setQuery("heart") }
                 if scenario == "emptySearch" { browser.setQuery("zzqxzzqxzzqx") }
                 let content = InlineBrowserView(browser: browser, onPick: { _ in }, onCategory: { browser.selectCategory($0) })
-                let view = VStack(spacing: scenario == "paired" ? 8 : 0) {
+                let view = VStack(spacing: 0) {
                     if scenario == "general" {
                         GeneralSettingsView()
                     } else if scenario == "privacy" {
@@ -43,15 +43,12 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
                     } else {
                         content.frame(width: BrowserLayout.width, height: BrowserLayout.height)
                     }
-                    if scenario == "paired" {
-                        QuickSuggestionStrip(browser: browser, suggestions: browser.quickSuggestions, onPick: nil)
-                    }
                 }
                     .environment(\.colorScheme, dark ? .dark : .light)
                     .environment(\.sizeCategory, scenario == "largeText" ? .accessibilityExtraExtraExtraLarge : .large)
                     .background(dark ? Color(red: 0.13, green: 0.13, blue: 0.14) : Color(red: 0.96, green: 0.96, blue: 0.97))
                 let hosting = NSHostingView(rootView: view)
-                let size = ["general", "privacy"].contains(scenario) ? NSSize(width: 650, height: 700) : NSSize(width: scenario == "paired" ? max(BrowserLayout.width, PickerLayout.quickSuggestionWidth) : BrowserLayout.width, height: BrowserLayout.height + (scenario == "paired" ? PickerLayout.quickSuggestionHeight + 8 : 0))
+                let size = ["general", "privacy"].contains(scenario) ? NSSize(width: 650, height: 700) : NSSize(width: BrowserLayout.width, height: BrowserLayout.height)
                 let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
                 window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 window.contentView = hosting

@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let database = EmojiDatabase.shared
     let engine: Engine
 
+    private static let migrateLaunchAtLoginKey = "spritz.migrateLaunchAtLogin"
     private let log = OSLog(subsystem: "ee.wells.Mojito", category: "AppDelegate")
     private let menuBar = MenuBarController()
     private let onboardingController = OnboardingWindowController()
@@ -51,6 +52,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // About → Stats reads this for "User since".
         if UserDefaults.standard.object(forKey: PrefsKey.firstLaunchDate) == nil {
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: PrefsKey.firstLaunchDate)
+        }
+
+        // One-shot used when an existing install is copied onto this bundle id.
+        // Cleared immediately so a later System Settings change is not undone.
+        if UserDefaults.standard.bool(forKey: Self.migrateLaunchAtLoginKey) {
+            UserDefaults.standard.removeObject(forKey: Self.migrateLaunchAtLoginKey)
+            LaunchAtLogin.apply(UserDefaults.standard.bool(forKey: PrefsKey.launchAtLogin))
         }
 
         // Arrows were a sub-toggle of emoticons before v1.4: emoticons off

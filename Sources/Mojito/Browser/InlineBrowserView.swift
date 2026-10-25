@@ -30,7 +30,8 @@ struct InlineBrowserView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private static let scrollSpace = "browserScroll"
-    private static let cellHeight: CGFloat = 40
+    fileprivate static let pickerGridSpace = "pickerGrid"
+    fileprivate static let cellHeight: CGFloat = 40
     private static let rowSpacing: CGFloat = 3
     /// Tab bar height (icon row). The grid scrolls under it, so the scroll
     /// content is inset by this much at the bottom.
@@ -181,35 +182,73 @@ struct InlineBrowserView: View {
     /// instead of leaving them hidden behind it.
     private var shortcutGrid: some View {
         VStack(spacing: 0) {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 32), spacing: 3), count: EmojiBrowserViewModel.shortcutColumns), spacing: Self.rowSpacing) {
-                ForEach(Array(browser.shortcutItems.enumerated()), id: \.element.id) { index, item in
-                    BrowserCell(emoji: item.emoji, index: index,
-                                isKeyboardSelected: index == browser.shortcutSelectedIndex,
-                                cellHeight: Self.cellHeight, shortcut: String(item.key),
-                                onPick: onPick, onHoverChanged: { value in
-                                    if let value { browser.shortcutSelectedIndex = value }
-                                })
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 32), spacing: BrowserLayout.gridSpacing), count: EmojiBrowserViewModel.shortcutColumns), spacing: Self.rowSpacing) {
+                        ForEach(Array(browser.pickerSlots.enumerated()), id: \.element.id) { index, slot in
+                            if let emoji = slot.emoji {
+                                ShortcutDragCell(emoji: emoji, index: index,
+                                                 isKeyboardSelected: index == browser.shortcutSelectedIndex,
+                                                 shortcut: slot.shortcut, frames: slotFrames,
+                                                 onPick: onPick) { point in
+                                    finishShortcutDrag(from: emoji.hexcode, at: point)
+                                }
+                            } else if let shortcut = slot.shortcut {
+                                emptyNumberSlot(id: slot.id, label: shortcut, selected: index == browser.shortcutSelectedIndex)
+                                    .background(SlotFrameReporter(id: slot.id, frames: slotFrames))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, BrowserLayout.gridInset)
+                    .padding(.top, 2)
                 }
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 2)
-            Spacer(minLength: 0)
-            if browser.shortcutPageCount > 1 {
-                HStack(spacing: 16) {
-                    Button { browser.changeShortcutPage(by: -1) } label: { Image(systemName: "chevron.left") }
-                        .disabled(browser.shortcutPageIndex == 0)
-                        .accessibilityLabel("Previous emoji page")
-                    Text("\(browser.shortcutPageIndex + 1) / \(browser.shortcutPageCount)")
-                        .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
-                    Button { browser.changeShortcutPage(by: 1) } label: { Image(systemName: "chevron.right") }
-                        .disabled(browser.shortcutPageIndex + 1 >= browser.shortcutPageCount)
-                        .accessibilityLabel("Next emoji page")
+                .scrollClipDisabled(true)
+                .coordinateSpace(name: Self.pickerGridSpace)
+                .onChange(of: browser.keyboardScrollIndex) { _, index in
+                    guard let index, browser.pickerSlots.indices.contains(index) else { return }
+                    proxy.scrollTo(browser.pickerSlots[index].id)
+                    browser.keyboardScrollIndex = nil
                 }
-                .buttonStyle(.borderless)
-                .frame(height: 28)
             }
             if browser.mode == .all { categoryBar }
         }
+    }
+
+    /// Layout frames of the shortcut cells, written by the cells and read when
+    /// a drag ends. Not observed, so updating it does not rebuild the scroller.
+    @State private var slotFrames = SlotFrames()
+
+    private func finishShortcutDrag(from hex: String, at point: CGPoint) {
+        switch ShortcutDrag.resolve(point: point, sourceHex: hex, frames: slotFrames.values) {
+        case .cancel:
+            return
+        case .unassign:
+            browser.dropShortcutOnUnassigned(from: hex)
+        case .number(let index):
+            browser.dropShortcut(from: hex, ontoEmptyNumber: index)
+        case .letter(let letter):
+            browser.dropShortcut(from: hex, ontoEmptyLetter: letter)
+        case .emoji(let target):
+            browser.dropShortcut(from: hex, onto: target)
+        }
+    }
+
+    private func emptyNumberSlot(id: String, label: String, selected: Bool) -> some View {
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.cellHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(selected ? 0.35 : 0.12), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            )
+            .overlay(alignment: .topLeading) {
+                Text(verbatim: label)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 2)
+            }
+            .accessibilityLabel("\(label), empty")
+            .accessibilityIdentifier(id)
     }
 
     private var grid: some View {
@@ -329,6 +368,125 @@ struct InlineBrowserView: View {
     }
 }
 
+/// Holds layout frames without publishing, so a drag can hit-test a drop slot
+/// without rebuilding the scroll view on every pointer move.
+final class SlotFrames {
+    var values: [String: CGRect] = [:]
+}
+
+private struct SlotFrameReporter: View {
+    let id: String
+    let frames: SlotFrames
+
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear
+                .onAppear { frames.values[id] = geo.frame(in: .named(InlineBrowserView.pickerGridSpace)) }
+                .onChange(of: geo.frame(in: .named(InlineBrowserView.pickerGridSpace))) { _, frame in
+                    frames.values[id] = frame
+                }
+        }
+    }
+}
+
+/// Where a shortcut drag was released. A miss is the empty area, which clears
+/// the key. Landing back on the same cell puts the icon back.
+enum ShortcutDrag {
+    enum Action: Equatable {
+        case cancel
+        case unassign
+        case number(Int)
+        case letter(Character)
+        case emoji(String)
+    }
+
+    static func resolve(point: CGPoint, sourceHex: String, frames: [String: CGRect]) -> Action {
+        if let own = frames[sourceHex], own.contains(point) { return .cancel }
+        let hits = frames.filter { $0.key != sourceHex && $0.value.insetBy(dx: -4, dy: -4).contains(point) }
+        guard let target = hits.min(by: {
+            hypot($0.value.midX - point.x, $0.value.midY - point.y)
+                < hypot($1.value.midX - point.x, $1.value.midY - point.y)
+        }) else { return .unassign }
+        if target.key.hasPrefix("number-"),
+           let label = target.key.split(separator: "-").last,
+           let index = EmojiBrowserViewModel.numberKeys.firstIndex(of: Character(String(label))) {
+            return .number(index)
+        }
+        if target.key.hasPrefix("letter-"),
+           let label = target.key.split(separator: "-").last,
+           label.count == 1, let letter = label.first {
+            return .letter(letter)
+        }
+        return .emoji(target.key)
+    }
+}
+
+/// Drags the whole cell with the pointer. The slot stays put as an empty
+/// outline; the icon and its key move at full size. State stays on this cell
+/// so the scrolling parent does not rebuild.
+private struct ShortcutDragCell: View {
+    let emoji: Emoji
+    let index: Int
+    let isKeyboardSelected: Bool
+    let shortcut: String?
+    let frames: SlotFrames
+    let onPick: (Emoji) -> Void
+    let onDragEnd: (CGPoint) -> Void
+
+    @State private var offset: CGSize = .zero
+    @State private var dragging = false
+    @State private var origin: CGRect = .zero
+
+    var body: some View {
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: InlineBrowserView.cellHeight)
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(dragging ? 0.18 : 0), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            }
+            .overlay {
+                cell(flying: false)
+                    .opacity(dragging ? 0 : 1)
+            }
+            .overlay {
+                if dragging {
+                    cell(flying: true)
+                        .offset(offset)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background(SlotFrameReporter(id: emoji.hexcode, frames: frames))
+            .zIndex(dragging ? 2 : 0)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 8, coordinateSpace: .named(InlineBrowserView.pickerGridSpace))
+                    .onChanged { value in
+                        if !dragging {
+                            origin = frames.values[emoji.hexcode] ?? .zero
+                            dragging = true
+                        }
+                        offset = value.translation
+                    }
+                    .onEnded { value in
+                        let point = CGPoint(x: origin.midX + value.translation.width,
+                                            y: origin.midY + value.translation.height)
+                        offset = .zero
+                        dragging = false
+                        guard origin.width > 0 else { return }
+                        onDragEnd(point)
+                    }
+            )
+    }
+
+    private func cell(flying: Bool) -> some View {
+        BrowserCell(emoji: emoji, index: index,
+                    isKeyboardSelected: isKeyboardSelected && !flying,
+                    cellHeight: InlineBrowserView.cellHeight,
+                    shortcut: shortcut, onPick: onPick, onHoverChanged: { _ in },
+                    tooltipEnabled: !dragging && !flying)
+    }
+}
+
 /// One emoji cell, broken out so hover state is per-cell `@State` and a cell
 /// scrolling under the cursor only invalidates itself — not the parent
 /// `InlineBrowserView`, which would re-evaluate the `ScrollView` and reset the
@@ -341,6 +499,7 @@ private struct BrowserCell: View {
     var shortcut: String? = nil
     let onPick: (Emoji) -> Void
     let onHoverChanged: (Int?) -> Void
+    var tooltipEnabled: Bool = true
 
     @State private var hovered: Bool = false
     @State private var showTooltip: Bool = false
@@ -377,11 +536,18 @@ private struct BrowserCell: View {
                 tooltipWork?.cancel()
                 hovered = hovering
                 onHoverChanged(hovering ? index : nil)
+                guard tooltipEnabled else { showTooltip = false; return }
                 if hovering {
                     let work = DispatchWorkItem { showTooltip = true }
                     tooltipWork = work
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
                 } else {
+                    showTooltip = false
+                }
+            }
+            .onChange(of: tooltipEnabled) { _, enabled in
+                if !enabled {
+                    tooltipWork?.cancel()
                     showTooltip = false
                 }
             }
@@ -493,7 +659,20 @@ private struct SectionOffsetKey: PreferenceKey {
 }
 
 enum BrowserLayout {
-    static let width: CGFloat = 352
+    /// The 8-column panel was 352pt. Ten columns keep that cell width, so the
+    /// number row is one line and the targets stay the same size.
+    private static let eightColumnWidth: CGFloat = 352
+    static let gridInset: CGFloat = 8
+    static let gridSpacing: CGFloat = 3
+    static let cellWidth: CGFloat = {
+        let columns: CGFloat = 8
+        let inner = eightColumnWidth - gridInset * 2
+        return (inner - gridSpacing * (columns - 1)) / columns
+    }()
+    static var width: CGFloat {
+        let columns = CGFloat(EmojiBrowserViewModel.shortcutColumns)
+        return (gridInset * 2 + cellWidth * columns + gridSpacing * (columns - 1)).rounded()
+    }
     static let height: CGFloat = {
         if #available(macOS 26.0, *) { return 420 }
         return 425

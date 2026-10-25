@@ -15,7 +15,15 @@ import Foundation
 final class EmojiBrowserViewModel: ObservableObject {
     /// Grid column count — keep in sync with the view's LazyVGrid.
     static let columns = 7
-    static let shortcutColumns = 8
+    /// Digit keys 1–9 then 0, one per column.
+    static let numberSlotCount = 10
+    static let shortcutColumns = numberSlotCount
+    static let numberKeys: [Character] = Array("1234567890")
+    static let letterKeys: [Character] = Array("abcdefghijklmnopqrstuvwxyz")
+    static let releasedLettersKey = "mojito.releasedLetters"
+    /// Rows under the search field and mode bar. The grid is topped up to this
+    /// so the panel is full even when the letter keys run out.
+    static let minimumShortcutSlots = shortcutColumns * 8
     private let supportsShortcuts: Bool
 
     enum Mode: String, CaseIterable, Identifiable {
@@ -41,8 +49,10 @@ final class EmojiBrowserViewModel: ObservableObject {
     /// Shortcut mode is the default: one digit or letter picks immediately.
     var onSearchModeChange: ((Bool) -> Void)?
     @Published private(set) var mode: Mode = .mostUsed
-    /// Frozen for this opening; number keys always address this same row.
-    let quickSuggestions: [Emoji]
+    /// Frozen for this opening except when a drag edits a key. Number keys
+    /// address these slots, and an empty slot is a key with no emoji.
+    private(set) var numberedSlots: [Emoji?] = Array(repeating: nil, count: numberSlotCount)
+    var quickSuggestions: [Emoji] { numberedSlots.compactMap { $0 } }
 
     struct ShortcutItem: Identifiable, Equatable {
         let emoji: Emoji
@@ -50,17 +60,39 @@ final class EmojiBrowserViewModel: ObservableObject {
         var id: String { "\(key)-\(emoji.hexcode)" }
     }
 
-    /// The shortcut row always starts with the stable 1–8 choices, followed by
+    /// One grid cell. A numbered slot can be empty. A letter or number is the
+    /// visible shortcut; `nil` means the emoji is shown with no key.
+    struct PickerSlot: Identifiable, Equatable {
+        let id: String
+        let emoji: Emoji?
+        let shortcut: String?
+    }
+
+    /// The whole picker, not one page: the 1–0 slots, then the
+    /// current page of letters, then every remaining emoji with no key.
+    @Published private(set) var pickerSlots: [PickerSlot] = []
+
+    /// The shortcut row always starts with the stable 1–0 choices, followed by
     /// one page of single-letter choices from the current mode.
     var shortcutItems: [ShortcutItem] {
-        let numbered = quickSuggestions.enumerated().map {
-            ShortcutItem(emoji: $0.element, key: Character(String($0.offset + 1)))
+        var items: [ShortcutItem] = []
+        for (offset, emoji) in numberedSlots.enumerated() {
+            guard let emoji else { continue }
+            items.append(ShortcutItem(emoji: emoji, key: Self.numberKeys[offset]))
         }
-        return numbered + (shortcutPages.indices.contains(shortcutPageIndex) ? shortcutPages[shortcutPageIndex] : [])
+        return items + (shortcutPages.indices.contains(shortcutPageIndex) ? shortcutPages[shortcutPageIndex] : [])
     }
     static let shortcutLetterPageSize = 26
     static let letterBindingsKey = "mojito.letterBindings"
-    let letterBindings: [String: String]
+    /// Hexcodes the user has taken off the keyboard. They stay visible and
+    /// are not given a new letter the next time the picker opens.
+    static let releasedShortcutsKey = "mojito.releasedShortcuts"
+    private(set) var letterBindings: [String: String] = [:]
+    private var releasedHexes: Set<String> = []
+    /// Letters the user dragged an emoji out of. They stay empty, and are not
+    /// given to another emoji the next time the picker opens.
+    private var releasedLetters: Set<Character> = []
+    private let defaults: UserDefaults
     private var shortcutPages: [[ShortcutItem]] = []
     @Published private(set) var shortcutPageIndex: Int = 0
     var shortcutPageCount: Int { max(1, shortcutPages.count) }
@@ -80,8 +112,47 @@ final class EmojiBrowserViewModel: ObservableObject {
             keys[page].insert(key)
         }
         shortcutPages = pages
+        publishPickerSlots()
+    }
+
+    private func publishPickerSlots() {
+        var slots: [PickerSlot] = []
+        var shown = Set<String>()
+        for (offset, emoji) in numberedSlots.enumerated() {
+            let label = String(Self.numberKeys[offset])
+            if let emoji {
+                slots.append(PickerSlot(id: emoji.hexcode, emoji: emoji, shortcut: label))
+                shown.insert(emoji.hexcode)
+            } else {
+                slots.append(PickerSlot(id: "number-\(label)", emoji: nil, shortcut: label))
+            }
+        }
+        let assigned = Dictionary(grouping: shortcutPages.first ?? [], by: \.key)
+        for letter in Self.letterKeys {
+            if let item = assigned[letter]?.first, shown.insert(item.emoji.hexcode).inserted {
+                slots.append(PickerSlot(id: item.emoji.hexcode, emoji: item.emoji, shortcut: String(letter)))
+            } else {
+                slots.append(PickerSlot(id: "letter-\(letter)", emoji: nil, shortcut: String(letter)))
+            }
+        }
+        func appendUnkeyed(_ emoji: Emoji) {
+            guard shown.insert(emoji.hexcode).inserted else { return }
+            slots.append(PickerSlot(id: emoji.hexcode, emoji: emoji, shortcut: nil))
+        }
+        for page in shortcutPages.dropFirst() {
+            for item in page { appendUnkeyed(item.emoji) }
+        }
+        for emoji in current { appendUnkeyed(emoji) }
+        if !current.isEmpty && slots.count < Self.minimumShortcutSlots {
+            for emoji in flat where slots.count < Self.minimumShortcutSlots {
+                appendUnkeyed(emoji)
+            }
+        }
+        pickerSlots = slots
     }
     @Published var shortcutSelectedIndex: Int = 0
+    /// Set only by arrow keys, so a pointer move never asks the grid to scroll.
+    @Published var keyboardScrollIndex: Int?
 
     /// True while the explicit search field owns the next keystrokes.
     @Published private(set) var searchInputActive: Bool = false
@@ -127,9 +198,189 @@ final class EmojiBrowserViewModel: ObservableObject {
 
     func emojiForShortcut(_ key: Character) -> Emoji? {
         guard !searchInputActive else { return nil }
+        if let index = Self.numberKeys.firstIndex(of: key) {
+            return numberedSlots.indices.contains(index) ? numberedSlots[index] : nil
+        }
         let lowered = String(key).lowercased()
         guard lowered.count == 1, let normalized = lowered.first else { return nil }
         return shortcutItems.first(where: { $0.key == normalized })?.emoji
+    }
+
+    /// Drop `sourceHex` onto another emoji. A keyed target takes or swaps that
+    /// key. An emoji with no key is the unassigned area: the source loses its
+    /// shortcut and the target does not gain one.
+    func dropShortcut(from sourceHex: String, onto targetHex: String) {
+        guard sourceHex != targetHex, database.byHexcode[sourceHex] != nil else { return }
+        let sourceKey = visibleKey(for: sourceHex)
+        let targetKey = visibleKey(for: targetHex)
+        switch (sourceKey, targetKey) {
+        case (_, nil):
+            if let sourceKey { releaseKey(sourceKey) }
+        case (nil, .number(let index)):
+            placeNumber(index, on: sourceHex)
+        case (nil, .letter(let letter)):
+            placeLetter(letter, on: sourceHex)
+        case (.number(let left), .number(let right)):
+            numberedSlots.swapAt(left, right)
+        case (.letter(let left), .letter(let right)):
+            swapLetters(left, right, sourceHex, targetHex)
+        case (.number(let index), .letter(let letter)):
+            swapNumberAndLetter(number: index, letter: letter, numberHex: sourceHex, letterHex: targetHex)
+        case (.letter(let letter), .number(let index)):
+            swapNumberAndLetter(number: index, letter: letter, numberHex: targetHex, letterHex: sourceHex)
+        }
+        saveShortcutEdits()
+        rebuildShortcutPages()
+    }
+
+    /// Drop onto the open area under the grid. Removes the source shortcut.
+    func dropShortcutOnUnassigned(from sourceHex: String) {
+        guard let sourceKey = visibleKey(for: sourceHex) else { return }
+        releaseKey(sourceKey)
+        saveShortcutEdits()
+        rebuildShortcutPages()
+    }
+
+    /// Drop onto an empty number cell, which assigns that number.
+    func dropShortcut(from sourceHex: String, ontoEmptyNumber index: Int) {
+        guard numberedSlots.indices.contains(index), numberedSlots[index] == nil,
+              database.byHexcode[sourceHex] != nil else { return }
+        if let sourceKey = visibleKey(for: sourceHex) {
+            vacate(sourceKey, hex: sourceHex)
+        }
+        placeNumber(index, on: sourceHex)
+        saveShortcutEdits()
+        rebuildShortcutPages()
+    }
+
+    /// Drop onto an empty letter cell, which assigns that letter and no other.
+    func dropShortcut(from sourceHex: String, ontoEmptyLetter letter: Character) {
+        guard database.byHexcode[sourceHex] != nil,
+              !letterBindings.values.contains(String(letter)) else { return }
+        if let sourceKey = visibleKey(for: sourceHex) {
+            vacate(sourceKey, hex: sourceHex)
+        }
+        placeLetter(letter, on: sourceHex)
+        saveShortcutEdits()
+        rebuildShortcutPages()
+    }
+
+    private enum VisibleKey {
+        case number(Int)
+        case letter(Character)
+    }
+
+    private func visibleKey(for hex: String) -> VisibleKey? {
+        if let index = numberedSlots.firstIndex(where: { $0?.hexcode == hex }) {
+            return .number(index)
+        }
+        if let item = shortcutPages.first?.first(where: { $0.emoji.hexcode == hex }) {
+            return .letter(item.key)
+        }
+        return nil
+    }
+
+    private func canonical(_ hex: String) -> String {
+        EmojiLetterBindings.canonicalHex(hex) ?? hex
+    }
+
+    /// Remove a shortcut entirely. A letter is taken off every emoji that
+    /// shared it, so it does not reappear on the next one down.
+    private func releaseKey(_ key: VisibleKey) {
+        switch key {
+        case .number(let index):
+            if let hex = numberedSlots[index]?.hexcode {
+                releasedHexes.insert(canonical(hex))
+                numberedSlots[index] = nil
+            }
+        case .letter(let letter):
+            let token = String(letter)
+            for (hex, value) in letterBindings where value == token {
+                letterBindings.removeValue(forKey: hex)
+                releasedHexes.insert(hex)
+            }
+            releasedLetters.insert(letter)
+        }
+    }
+
+    /// Leave a key without marking its emoji as permanently unbound. Used
+    /// when that emoji is about to receive a different key.
+    private func vacate(_ key: VisibleKey, hex: String) {
+        switch key {
+        case .number(let index):
+            if numberedSlots[index]?.hexcode == hex { numberedSlots[index] = nil }
+        case .letter(let letter):
+            letterBindings.removeValue(forKey: canonical(hex))
+            releasedLetters.insert(letter)
+        }
+    }
+
+    private func placeNumber(_ index: Int, on hex: String) {
+        if let previous = numberedSlots[index]?.hexcode, previous != hex {
+            releasedHexes.insert(canonical(previous))
+            letterBindings.removeValue(forKey: canonical(previous))
+        }
+        for slot in numberedSlots.indices where slot != index && numberedSlots[slot]?.hexcode == hex {
+            numberedSlots[slot] = nil
+        }
+        letterBindings.removeValue(forKey: canonical(hex))
+        numberedSlots[index] = database.byHexcode[hex]
+        releasedHexes.remove(canonical(hex))
+    }
+
+    private func placeLetter(_ letter: Character, on hex: String) {
+        let token = String(letter)
+        let owner = canonical(hex)
+        for (key, value) in letterBindings where value == token && key != owner {
+            letterBindings.removeValue(forKey: key)
+            releasedHexes.insert(key)
+        }
+        for slot in numberedSlots.indices where numberedSlots[slot]?.hexcode == hex {
+            numberedSlots[slot] = nil
+        }
+        letterBindings[owner] = token
+        releasedHexes.remove(owner)
+        releasedLetters.remove(letter)
+    }
+
+    private func swapLetters(_ left: Character, _ right: Character, _ source: String, _ target: String) {
+        let sourceKey = canonical(source)
+        let targetKey = canonical(target)
+        stripLetter(left, except: targetKey)
+        stripLetter(right, except: sourceKey)
+        letterBindings[sourceKey] = String(right)
+        letterBindings[targetKey] = String(left)
+        releasedHexes.remove(sourceKey)
+        releasedHexes.remove(targetKey)
+        releasedLetters.remove(left)
+        releasedLetters.remove(right)
+    }
+
+    private func swapNumberAndLetter(number index: Int, letter: Character, numberHex: String, letterHex: String) {
+        let numberKey = canonical(numberHex)
+        let letterKey = canonical(letterHex)
+        stripLetter(letter, except: numberKey)
+        letterBindings.removeValue(forKey: letterKey)
+        letterBindings[numberKey] = String(letter)
+        numberedSlots[index] = database.byHexcode[letterHex]
+        releasedHexes.remove(numberKey)
+        releasedHexes.remove(letterKey)
+        releasedLetters.remove(letter)
+    }
+
+    private func stripLetter(_ letter: Character, except owner: String) {
+        let token = String(letter)
+        for (key, value) in letterBindings where value == token && key != owner {
+            letterBindings.removeValue(forKey: key)
+            releasedHexes.insert(key)
+        }
+    }
+
+    private func saveShortcutEdits() {
+        defaults.set(numberedSlots.map { $0?.hexcode ?? "" }, forKey: Self.numberedEmojiKey)
+        defaults.set(letterBindings, forKey: Self.letterBindingsKey)
+        defaults.set(Array(releasedHexes).sorted(), forKey: Self.releasedShortcutsKey)
+        defaults.set(releasedLetters.map { String($0) }.sorted(), forKey: Self.releasedLettersKey)
     }
 
     /// A single emoji cell carrying its global flat index as its identity —
@@ -199,6 +450,7 @@ final class EmojiBrowserViewModel: ObservableObject {
     /// Symbols toggle — the alias picker always offers symbols as alias targets.
     init(database: EmojiDatabase, quickAccess: QuickAccessStore, includeSymbols: Bool = false, defaults: UserDefaults = .standard, contextText: String? = nil) {
         self.database = database
+        self.defaults = defaults
         self.supportsShortcuts = !includeSymbols
         self.searchInputActive = includeSymbols
         self.usage = (defaults.dictionary(forKey: PrefsKey.usageCounts) as? [String: Int]) ?? [:]
@@ -219,19 +471,45 @@ final class EmojiBrowserViewModel: ObservableObject {
         self.mostUsed = ranked
         let candidates = ranked + QuickAccess.resolved(store: quickAccess, database: database, usage: self.usage)
         var quickSeen = Set<String>()
-        let fallbackQuick = Array(candidates.filter { quickSeen.insert($0.hexcode).inserted }.prefix(8))
-        var stableSeen = Set<String>()
-        var stable = (defaults.stringArray(forKey: Self.numberedEmojiKey) ?? [])
-            .compactMap { database.byHexcode[$0] }
-            .filter { stableSeen.insert($0.hexcode).inserted }
-        for emoji in fallbackQuick where stable.count < 8 && stableSeen.insert(emoji.hexcode).inserted {
-            stable.append(emoji)
+        let fallbackQuick = Array(candidates.filter { quickSeen.insert($0.hexcode).inserted }.prefix(Self.numberSlotCount))
+        let released = Set((defaults.stringArray(forKey: Self.releasedShortcutsKey) ?? []).compactMap {
+            EmojiLetterBindings.canonicalHex($0)
+        })
+        self.releasedHexes = released
+        let blockedLetters = Set((defaults.stringArray(forKey: Self.releasedLettersKey) ?? []).compactMap(\.first))
+        self.releasedLetters = blockedLetters
+        let rawNumbers = defaults.stringArray(forKey: Self.numberedEmojiKey) ?? []
+        var slots: [Emoji?] = []
+        if rawNumbers.isEmpty {
+            var stableSeen = Set<String>()
+            for emoji in fallbackQuick where slots.count < Self.numberSlotCount && stableSeen.insert(emoji.hexcode).inserted {
+                slots.append(emoji)
+            }
+        } else {
+            for value in rawNumbers.prefix(Self.numberSlotCount) {
+                slots.append(value.isEmpty ? nil : database.byHexcode[value])
+            }
+            if rawNumbers.count < Self.numberSlotCount {
+                var stableSeen = Set(slots.compactMap { $0?.hexcode })
+                for emoji in fallbackQuick where slots.count < Self.numberSlotCount {
+                    let hex = EmojiLetterBindings.canonicalHex(emoji.hexcode) ?? emoji.hexcode
+                    if released.contains(hex) || !stableSeen.insert(emoji.hexcode).inserted { continue }
+                    slots.append(emoji)
+                }
+            }
         }
-        self.quickSuggestions = Array(stable.prefix(8))
-        let numbered = Set(self.quickSuggestions.map(\.hexcode))
+        while slots.count < Self.numberSlotCount { slots.append(nil) }
+        self.numberedSlots = Array(slots.prefix(Self.numberSlotCount))
+        let numbered = Set(self.numberedSlots.compactMap { $0?.hexcode })
+        var savedLetters = (defaults.dictionary(forKey: Self.letterBindingsKey) as? [String: String]) ?? [:]
+        for hex in released { savedLetters.removeValue(forKey: hex) }
         self.letterBindings = EmojiLetterBindings.resolve(
-            candidates: (ranked + flat).filter { !numbered.contains($0.hexcode) },
-            saved: (defaults.dictionary(forKey: Self.letterBindingsKey) as? [String: String]) ?? [:])
+            candidates: (ranked + flat).filter {
+                !numbered.contains($0.hexcode)
+                    && !released.contains(EmojiLetterBindings.canonicalHex($0.hexcode) ?? $0.hexcode)
+            },
+            saved: savedLetters,
+            blocked: blockedLetters)
         var seen = Set<String>()
         self.recentEmojis = (defaults.stringArray(forKey: PrefsKey.recentEmoji) ?? [])
             .filter { seen.insert($0).inserted }
@@ -301,8 +579,8 @@ final class EmojiBrowserViewModel: ObservableObject {
 
     var selectedEmoji: Emoji? {
         if supportsShortcuts && !searchInputActive {
-            let choices = shortcutItems
-            return choices.indices.contains(shortcutSelectedIndex) ? choices[shortcutSelectedIndex].emoji : choices.first?.emoji
+            guard pickerSlots.indices.contains(shortcutSelectedIndex) else { return pickerSlots.compactMap(\.emoji).first }
+            return pickerSlots[shortcutSelectedIndex].emoji
         }
         let items = current
         if let h = hoverIndex, items.indices.contains(h) { return items[h] }
@@ -336,16 +614,9 @@ final class EmojiBrowserViewModel: ObservableObject {
         current = computeCurrent()  // → whole library
         if let section = sections.first(where: { $0.category == category }) {
             selectedIndex = section.startIndex
-            if supportsShortcuts {
-                if let first = section.cells.first?.emoji {
-                    if let quickIndex = quickSuggestions.firstIndex(where: { $0.hexcode == first.hexcode }) {
-                        shortcutSelectedIndex = quickIndex
-                    } else if let page = shortcutPages.firstIndex(where: { $0.contains { $0.emoji.hexcode == first.hexcode } }),
-                              let index = shortcutPages[page].firstIndex(where: { $0.emoji.hexcode == first.hexcode }) {
-                        shortcutPageIndex = page
-                        shortcutSelectedIndex = quickSuggestions.count + index
-                    }
-                }
+            if supportsShortcuts, let first = section.cells.first?.emoji,
+               let index = pickerSlots.firstIndex(where: { $0.emoji?.hexcode == first.hexcode }) {
+                shortcutSelectedIndex = index
             }
         }
         // If we were searching the list was a flat result grid; rebuilding the
@@ -375,7 +646,7 @@ final class EmojiBrowserViewModel: ObservableObject {
 
     func move(_ direction: GifMoveDirection) {
         if supportsShortcuts && !searchInputActive {
-            let count = shortcutItems.count
+            let count = pickerSlots.count
             guard count > 0 else { return }
             let delta: Int
             switch direction {
@@ -386,6 +657,7 @@ final class EmojiBrowserViewModel: ObservableObject {
             }
             hoverIndex = nil
             shortcutSelectedIndex = min(max(0, shortcutSelectedIndex + delta), count - 1)
+            keyboardScrollIndex = shortcutSelectedIndex
             return
         }
         let count = current.count
@@ -468,7 +740,7 @@ final class EmojiBrowserViewModel: ObservableObject {
     /// Mouse pick: snap the selection to the clicked glyph.
     func select(_ emoji: Emoji) {
         hoverIndex = nil
-        if let index = shortcutItems.firstIndex(where: { $0.emoji.hexcode == emoji.hexcode }) {
+        if let index = pickerSlots.firstIndex(where: { $0.emoji?.hexcode == emoji.hexcode }) {
             shortcutSelectedIndex = index
         }
         if let idx = current.firstIndex(where: { $0.hexcode == emoji.hexcode }) {

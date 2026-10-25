@@ -5,7 +5,7 @@ An independent fork of Mojito v1.10.1, focused on fast emoji insertion.
 - Select a visible emoji with one number or letter after opening the picker.
 - Keep mnemonic letters attached to their emoji as usage rankings change.
 - Browse full Most used and Recent lists, with collision-free pages.
-- Show a compact numbered row near the typing area, with a window-based fallback.
+- Open near the text caret, with a window-based fallback when a caret cannot be read.
 - Offer local keyword suggestions from supported text fields.
 - Open the full catalogue on a fresh install.
 

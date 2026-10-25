@@ -103,19 +103,3 @@ struct CaretLocatorTests {
         #expect(CaretLocator.windowFallbackRect(windowFrame: CGRect(x: 2_000, y: 2_000, width: 800, height: 600), screenFrames: [CGRect(x: 0, y: 0, width: 1_600, height: 1_000)]) == nil)
     }
 }
-
-@MainActor
-struct CompanionPlacementTests {
-    @Test func companionDoesNotCoverNumberRowOnLaptopOrOffsetDisplay() {
-        for screen in [CGRect(x: 0, y: 0, width: 1280, height: 720),
-                       CGRect(x: -1280, y: 300, width: 1280, height: 600)] {
-            for dy in [CGFloat(40), 220, 480] {
-                let strip = CGRect(x: screen.minX + 700, y: screen.minY + dy, width: 357, height: 54)
-                let initial = CGRect(x: strip.minX, y: strip.minY, width: 352, height: 420)
-                let result = PickerWindow.browserFrame(initial, avoiding: strip, visible: screen)
-                #expect(screen.contains(result))
-                #expect(!result.intersects(strip))
-            }
-        }
-    }
-}
