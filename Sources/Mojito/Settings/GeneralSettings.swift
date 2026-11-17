@@ -2,6 +2,7 @@ import SwiftUI
 import KeyboardShortcuts
 
 struct GeneralSettingsView: View {
+    @AppStorage(SpeechInputProvider.preferenceKey) private var speechInput: SpeechInputProvider = .apple
     @ObservedObject private var alternatives = DictationAlternatives.shared
     @AppStorage(PrefsKey.launchAtLogin) private var launchAtLogin: Bool = false
     @AppStorage(PrefsKey.showMenuBarIcon) private var showMenuBarIcon: Bool = true
@@ -49,8 +50,17 @@ struct GeneralSettingsView: View {
                 }
                 .toggleStyle(.switch)
 
-                Picker("Speech alternatives", selection: $alternatives.provider) {
-                    ForEach(RefinementProvider.allCases) { Text($0.rawValue).tag($0) }
+                Picker("Speech input", selection: $speechInput) {
+                    ForEach(SpeechInputProvider.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .onChange(of: speechInput) { _, _ in
+                    SpeechController.shared.cancel()
+                    DictationAlternatives.shared.clear()
+                }
+                if speechInput == .apple {
+                    Picker("Speech alternatives", selection: $alternatives.provider) {
+                        ForEach(RefinementProvider.allCases) { Text($0.rawValue).tag($0) }
+                    }
                 }
 
                 LabeledContent {

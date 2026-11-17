@@ -597,13 +597,18 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             switch fnAction {
             case .start:
                 guard SystemEmojiPickerReplacer.shared.globeOpensBrowser, self.isActive else { return }
+                LocalTelemetry.shared.record(.fnHold)
+                guard SpeechInputProvider.current == .apple else {
+                    // Fn flags pass through unchanged. ChatGPT owns its native
+                    // hold shortcut and inserts its own actual-audio transcript.
+                    speech.cancel(); DictationAlternatives.shared.clear(); return
+                }
                 self.speechDeliveryGeneration &+= 1
                 // Preserve the last result while Fn is down: Tab may turn this
                 // into a cycle chord. A completed new transcript replaces it.
                 DictationAlternatives.shared.hide()
                 let delivery = self.speechDeliveryGeneration
                 speech.cancel()
-                LocalTelemetry.shared.record(.fnHold)
                 self.cancelCapture()
                 let cache = FocusedElementCache.shared
                 guard cache.haveFieldInfo, !cache.focusedIsSecure, cache.focusedIsEditable,
