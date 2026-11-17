@@ -56,3 +56,24 @@ struct RefinementRunnerTests {
         #expect(RefinementRunner.serverOverrides("[mcp_servers.foo]\nurl='x'\n[mcp_servers.foo.env] # string values\n[mcp_servers.\"bar-baz\"]\n") == ["-c", "mcp_servers.foo.enabled=false", "-c", "mcp_servers.\"bar-baz\".enabled=false"])
     }
 }
+
+@MainActor
+struct DictationCycleTests {
+    @Test func cyclesBothWaysAndWaitsForAlternatives() {
+        #expect(DictationAlternatives.nextIndex(current: 0, count: 1, backward: false) == nil)
+        #expect(DictationAlternatives.nextIndex(current: 0, count: 3, backward: false) == 1)
+        #expect(DictationAlternatives.nextIndex(current: 1, count: 3, backward: false) == 2)
+        #expect(DictationAlternatives.nextIndex(current: 2, count: 3, backward: false) == 0)
+        #expect(DictationAlternatives.nextIndex(current: 0, count: 3, backward: true) == 2)
+    }
+    @Test func fnTabDoesNotStealOrdinaryTabOrOtherChords() {
+        #expect(KeyMonitor.isSpeechCycle(keyCode: 48, flags: .maskSecondaryFn))
+        #expect(KeyMonitor.isSpeechCycle(keyCode: 48, flags: [.maskSecondaryFn, .maskShift]))
+        #expect(!KeyMonitor.isSpeechCycle(keyCode: 48, flags: []))
+        #expect(!KeyMonitor.isSpeechCycle(keyCode: 48, flags: [.maskSecondaryFn, .maskCommand]))
+        var gesture = FnGesture()
+        gesture.press(at: 0, modified: false)
+        #expect(gesture.interrupt() == .cancel)
+        #expect(gesture.release(at: 0.1) == nil)
+    }
+}

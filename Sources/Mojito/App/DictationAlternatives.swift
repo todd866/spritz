@@ -28,6 +28,7 @@ final class DictationAlternatives: ObservableObject {
     private var session = UUID()
     private var revision = 0
     private var applying = false
+    private var appliedIndex = 0
     private var expiry: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
     private var clickMonitor: Any?
@@ -53,7 +54,7 @@ final class DictationAlternatives: ObservableObject {
         guard provider != .off else { return }
         focusGeneration = FocusedElementCache.shared.bridgeFocusGeneration
         self.element = element; self.pid = pid; choices = [text]; currentText = text
-        selected = 0; copyOnly = false
+        selected = 0; appliedIndex = 0; copyOnly = false
         captureReceipt()
         refine()
         let id = session
@@ -124,6 +125,24 @@ final class DictationAlternatives: ObservableObject {
         }
         return true
     }
+    static func nextIndex(current: Int, count: Int, backward: Bool) -> Int? {
+        guard count > 1 else { return nil }
+        return (current + (backward ? count - 1 : 1)) % count
+    }
+    func cycle(backward: Bool, emoji: @escaping () -> Void) -> Bool {
+        guard !choices.isEmpty, targetMatches() else { return false }
+        LocalTelemetry.shared.record(.refinementCycle)
+        if !visible { _ = toggle(emoji: emoji) }
+        guard !busy, !applying, let next = Self.nextIndex(current: appliedIndex, count: choices.count, backward: backward) else { return true }
+        selected = next
+        // A chord must never silently copy, or invalidate a receipt that is
+        // still being captured just after the previous replacement.
+        guard !copyOnly else { status = "Text changed · copy to use"; return true }
+        guard receipt != nil else { return true }
+        choose(next)
+        return true
+    }
+
     func hide() {
         panel?.orderOut(nil); visible = false
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }; clickMonitor = nil
@@ -164,7 +183,7 @@ final class DictationAlternatives: ObservableObject {
                     self.copyOnly = true; self.status = "Text changed · copy to use"; return
                 }
                 TextInserter.replace(charactersToDelete: receipt.text.count, with: text)
-                self.revision &+= 1; self.receipt = nil; self.currentText = text; self.hide(); self.captureReceipt()
+                self.revision &+= 1; self.receipt = nil; self.currentText = text; self.appliedIndex = index; self.hide(); self.captureReceipt()
                 LocalTelemetry.shared.record(.refinementChosen)
             }
         }
@@ -193,7 +212,7 @@ struct DictationAlternativesView: View {
                     ForEach(Array(model.choices.enumerated()), id: \.offset) { index, text in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                Text(["1 · Original", "2 · Cleaned", "3 · Clearer"][index]).font(.system(size: 12, weight: .semibold))
+                                Text(["1 · Original", "2 · Corrected", "3 · Clearer"][index]).font(.system(size: 12, weight: .semibold))
                                 Spacer()
                                 if !model.copyOnly { Button("Copy") { model.copy(index) } }
                                 Button(model.copyOnly ? "Copy" : "Use") { model.choose(index) }

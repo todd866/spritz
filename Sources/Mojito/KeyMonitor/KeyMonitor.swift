@@ -14,6 +14,7 @@ protocol KeyMonitorDelegate: AnyObject {
     /// Globe below the session tap), so suppression is handled by the
     /// AppleFnUsageType takeover instead.
     func keyMonitor(_ monitor: KeyMonitor, fnAction: FnGesture.Action)
+    func keyMonitor(_ monitor: KeyMonitor, cycleSpeechBackward: Bool) -> Bool
     func keyMonitorDidTapGlobeKey(_ monitor: KeyMonitor)
 }
 
@@ -109,12 +110,20 @@ final class KeyMonitor {
         // A real keypress during an fn hold means it wasn't a lone Globe tap.
         fnTimer?.cancel(); deliver(fnGesture.interrupt())
 
+        if Self.isSpeechCycle(keyCode: Int(event.getIntegerValueField(.keyboardEventKeycode)), flags: event.flags),
+           delegate?.keyMonitor(self, cycleSpeechBackward: event.flags.contains(.maskShift)) == true { return nil }
+
         if cancelEscape { SpeechController.shared.cancel(); return nil }
         let input = translate(event: event)
         guard let input else { return Unmanaged.passUnretained(event) }
 
         let consumed = delegate?.keyMonitor(self, didReceive: input) ?? false
         return consumed ? nil : Unmanaged.passUnretained(event)
+    }
+
+    nonisolated static func isSpeechCycle(keyCode: Int, flags: CGEventFlags) -> Bool {
+        keyCode == kVK_Tab && flags.contains(.maskSecondaryFn)
+            && flags.intersection([.maskCommand, .maskControl, .maskAlternate]).isEmpty
     }
 
     private func handleFlagsChanged(_ event: CGEvent) {

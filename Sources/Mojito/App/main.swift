@@ -18,14 +18,22 @@ if CommandLine.arguments.contains("--telemetry") {
     exit(0)
 }
 // Explicit synthetic check: no user content, microphone, event tap or windows.
-if CommandLine.arguments.contains("--check-refinement") {
+if CommandLine.arguments.contains("--check-refinement") || CommandLine.arguments.contains("--check-medical-refinement") {
     var finished = false
     var success = false
     let started = Date()
     let runner = MainActor.assumeIsolated { RefinementRunner() }
     MainActor.assumeIsolated {
-        runner.run("um can you move the meeting to Thursday at three I think that works better but please check with Sam first", provider: .codex) { result in
-            success = result != nil; finished = true
+        let medical = CommandLine.arguments.contains("--check-medical-refinement")
+        let sample = medical ? "The patient needed a sal pingo oophorectomy and had previously suffered from post streptococcal glow merulo nephritis." : "um can you move the meeting to Thursday at three I think that works better but please check with Sam first"
+        runner.run(sample, provider: .codex) { result in
+            success = result != nil
+            if medical, let result {
+                let normalized = result.cleaned.lowercased().filter { $0.isLetter }
+                success = normalized.contains("salpingooophorectomy") && normalized.contains("poststreptococcalglomerulonephritis")
+                print("Synthetic medical correction: \(result.cleaned)")
+            }
+            finished = true
         }
     }
     while !finished { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }

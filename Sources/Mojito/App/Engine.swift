@@ -583,6 +583,14 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         }
     }
 
+    nonisolated func keyMonitor(_ monitor: KeyMonitor, cycleSpeechBackward: Bool) -> Bool {
+        MainActor.assumeIsolated {
+            self.speechDeliveryGeneration &+= 1
+            SpeechController.shared.cancel()
+            return DictationAlternatives.shared.cycle(backward: cycleSpeechBackward, emoji: { [weak self] in self?.toggleBrowser() })
+        }
+    }
+
     nonisolated func keyMonitor(_ monitor: KeyMonitor, fnAction: FnGesture.Action) {
         MainActor.assumeIsolated {
             let speech = SpeechController.shared
@@ -590,7 +598,9 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             case .start:
                 guard SystemEmojiPickerReplacer.shared.globeOpensBrowser, self.isActive else { return }
                 self.speechDeliveryGeneration &+= 1
-                DictationAlternatives.shared.clear()
+                // Preserve the last result while Fn is down: Tab may turn this
+                // into a cycle chord. A completed new transcript replaces it.
+                DictationAlternatives.shared.hide()
                 let delivery = self.speechDeliveryGeneration
                 speech.cancel()
                 LocalTelemetry.shared.record(.fnHold)
