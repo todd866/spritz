@@ -16,6 +16,25 @@ enum LaunchAtLogin {
         }
     }
 
+    /// Never overrides a user's disabled/approval-required login-item choice.
+    static func shouldRegister(status: SMAppService.Status) -> Bool {
+        status == .notRegistered || status == .notFound
+    }
+
+    static var statusCode: Int { SMAppService.mainApp.status.rawValue }
+
+    /// Called only by the installed running GUI app, never by a helper binary.
+    static func enableIfNeeded() -> (status: Int, error: String) {
+        var failure = ""
+        let service = SMAppService.mainApp
+        if shouldRegister(status: service.status) {
+            do { try service.register() }
+            catch { failure = error.localizedDescription }
+        }
+        syncFromSystem()
+        return (service.status.rawValue, failure)
+    }
+
     static var isEnabled: Bool {
         SMAppService.mainApp.status == .enabled
     }

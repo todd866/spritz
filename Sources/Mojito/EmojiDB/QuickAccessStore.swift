@@ -126,7 +126,7 @@ enum EmojiRecents {
 ///
 /// Bindings are deliberately independent of usage ranking: an existing
 /// binding is kept forever, while new emoji get a deterministic mnemonic (or
-/// a balanced fallback) in the order supplied by the caller.
+/// an unused fallback) in the order supplied by the caller.
 enum EmojiLetterBindings {
     private static let alphabet = Array("abcdefghijklmnopqrstuvwxyz")
 
@@ -134,33 +134,33 @@ enum EmojiLetterBindings {
     /// entries in `saved`. The returned keys are canonicalised uppercase
     /// hexcodes and values are lowercase ASCII letters.
     static func resolve(candidates: [Emoji], saved: [String: String], blocked: Set<Character> = []) -> [String: String] {
-        var result: [String: String] = [:]
-        // Sorting makes duplicate differently-cased saved keys deterministic.
-        for key in saved.keys.sorted() {
-            guard let canonical = canonicalHex(key),
-                  let letter = asciiLetter(saved[key] ?? ""),
-                  !blocked.contains(letter) else { continue }
-            if result[canonical] == nil { result[canonical] = String(letter) }
-        }
-
         var unique: [Emoji] = []
         var seen = Set<String>()
         for emoji in candidates {
             guard let hex = canonicalHex(emoji.hexcode), seen.insert(hex).inserted else { continue }
             unique.append(emoji)
         }
-
-        var counts = Dictionary(uniqueKeysWithValues: alphabet.map { ($0, 0) })
-        for letter in result.values { counts[letter.first!, default: 0] += 1 }
+        var normalized: [String: Character] = [:]
+        for key in saved.keys.sorted() {
+            guard let hex = canonicalHex(key), let letter = asciiLetter(saved[key] ?? ""),
+                  !blocked.contains(letter), normalized[hex] == nil else { continue }
+            normalized[hex] = letter
+        }
+        var result: [String: String] = [:]
+        var occupied = blocked
+        // Migrate the old shared-letter pages to one owner per key. Candidate
+        // order prefers the most-used owner; subsequent opens persist this map.
         for emoji in unique {
             let hex = canonicalHex(emoji.hexcode)!
-            if result[hex] != nil { continue }
-
-            let choices = mnemonicChoices(for: emoji).filter { !blocked.contains($0) }
-            guard let minimum = choices.map({ counts[$0, default: 0] }).min(),
-                  let chosen = choices.first(where: { counts[$0, default: 0] == minimum }) else { continue }
-            result[hex] = String(chosen)
-            counts[chosen, default: 0] += 1
+            guard let letter = normalized[hex], occupied.insert(letter).inserted else { continue }
+            result[hex] = String(letter)
+        }
+        for emoji in unique where result.count + blocked.count < alphabet.count {
+            let hex = canonicalHex(emoji.hexcode)!
+            guard result[hex] == nil,
+                  let letter = mnemonicChoices(for: emoji).first(where: { !occupied.contains($0) }) else { continue }
+            result[hex] = String(letter)
+            occupied.insert(letter)
         }
         return result
     }

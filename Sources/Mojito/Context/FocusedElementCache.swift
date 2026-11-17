@@ -23,11 +23,14 @@ final class FocusedElementCache {
     /// Nil during transitions / when AX is unusable. Any reassignment (app
     /// switch, seed install, within-app focus move) invalidates the cached
     /// field info below — it described the *previous* focus.
+    private(set) var bridgeFocusGeneration = 0
     private(set) var element: AXUIElement? {
         didSet {
+            bridgeFocusGeneration += 1
             haveFieldInfo = false
             focusedRole = nil
             _ = fieldGeneration.withLock { $0 += 1 }   // cancel in-flight reclassifies
+            NotificationCenter.default.post(name: TouchBarBridge.contextName, object: nil)
         }
     }
 
@@ -60,6 +63,7 @@ final class FocusedElementCache {
         focusedIsEditable = editable
         focusedRole = role
         haveFieldInfo = true
+        NotificationCenter.default.post(name: TouchBarBridge.contextName, object: nil)
     }
 
     // Classifies off-thread; publishes iff focus hasn't moved. AX-opaque apps that miss within-app moves rely on the exclusion list as backstop.

@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private let onboardingController = OnboardingWindowController()
     private let settingsController = SettingsWindowController()
     private var observers = Set<AnyCancellable>()
+    private var touchBarBridge: TouchBarBridge?
 
     override init() {
         engine = Engine(database: database, exclusions: exclusions)
@@ -108,11 +109,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let needsOnboarding = !UserDefaults.standard.bool(forKey: PrefsKey.onboardingComplete)
             || !permissions.allGranted
         if needsOnboarding {
-            openOnboarding()
+            if !TouchBarBridge.backgroundLaunch { openOnboarding() }
         } else {
             engine.start()
             TelemetryConsent.presentIfNeeded()
         }
+
+        touchBarBridge = TouchBarBridge(engine: engine, permissions: permissions)
 
         NotificationCenter.default.publisher(for: .mojitoShouldShowOnboarding)
             .receive(on: RunLoop.main)
@@ -281,5 +284,192 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         NSApp.windowsMenu = windowMenu
 
         NSApp.mainMenu = mainMenu
+    }
+}
+
+import AppKit
+import ApplicationServices
+import Combine
+
+/// Local metadata only. Never serializes focused text, selection contents or clipboard.
+@MainActor
+final class TouchBarBridge {
+    static let requestName = Notification.Name("io.github.todd866.Spritz.touchbar.request")
+    static let stateName = Notification.Name("io.github.todd866.Spritz.touchbar.state")
+    static let contextName = Notification.Name("io.github.todd866.Spritz.focus-metadata-changed")
+    static var userObject: String { "uid:\(getuid())" }
+    static var stateURL: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state/spritz/touchbar-state.json") }
+    static let backgroundLaunch = CommandLine.arguments.contains("--bridge-background")
+    let instanceID = UUID().uuidString
+    private let engine: Engine
+    private let permissions: PermissionsCoordinator
+    private var observers: [NSObjectProtocol] = []
+    private var subscriptions = Set<AnyCancellable>()
+    private var heartbeat: Timer?
+    private var pendingID: String?
+    private var handledIDs: [String] = []
+    private var lastResult: [String: Any] = [:]
+    private var loginReceipt: [String: Any] = [:]
+
+    init(engine: Engine, permissions: PermissionsCoordinator) {
+        self.engine = engine; self.permissions = permissions
+        observers.append(DistributedNotificationCenter.default().addObserver(forName: Self.requestName, object: Self.userObject, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated { self?.receive(note.userInfo ?? [:]) }
+        })
+        observers.append(NotificationCenter.default.addObserver(forName: Self.contextName, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.publish() }
+        })
+        permissions.$accessibility.combineLatest(permissions.$inputMonitoring).sink { [weak self] _, _ in
+            DispatchQueue.main.async { self?.publish() }
+        }.store(in: &subscriptions)
+        heartbeat = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.publish() }
+        }
+        publish()
+        if let i = CommandLine.arguments.firstIndex(of: "--bridge-initial-request"), CommandLine.arguments.indices.contains(i + 1),
+           let data = Data(base64Encoded: CommandLine.arguments[i + 1]),
+           let request = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            // Cache seeds asynchronously. A bounded cold request never opens onboarding.
+            attemptCold(request, deadline: ProcessInfo.processInfo.systemUptime + 2)
+        }
+    }
+
+    private func attemptCold(_ request: [AnyHashable: Any], deadline: TimeInterval) {
+        if request["command"] as? String == "enable-login" { receive(request); return }
+        if !permissions.allGranted { finish(request["requestID"] as? String ?? "", status: "permissions-missing"); return }
+        if !FocusedElementCache.shared.haveFieldInfo && ProcessInfo.processInfo.systemUptime < deadline {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.attemptCold(request, deadline: deadline) }
+            return
+        }
+        receive(request)
+    }
+
+    func publish() {
+        let cache = FocusedElementCache.shared
+        let front = NSWorkspace.shared.frontmostApplication
+        let matches = front?.processIdentifier == cache.focusedPID
+        let known = permissions.allGranted && matches && cache.haveFieldInfo
+        let supportedTextRole = TouchBarRequestPolicy.isTextRole(cache.focusedRole)
+        var value: [String: Any] = ["schema": 1, "t": Date().timeIntervalSince1970,
+            "pid": ProcessInfo.processInfo.processIdentifier, "instanceID": instanceID,
+            "frontPID": front?.processIdentifier ?? 0, "frontBundle": front?.bundleIdentifier ?? "",
+            "focusGeneration": cache.bridgeFocusGeneration,
+            "accessibility": permissions.accessibility, "inputMonitoring": permissions.inputMonitoring,
+            "known": known, "editable": known && supportedTextRole && cache.focusedIsEditable,
+            "secure": !known || cache.focusedIsSecure,
+            "selectionKnown": false, "hasSelection": false,
+            "pickerVisible": engine.bridgePickerVisible, "active": engine.isActive,
+            "quickEmoji": engine.bridgeQuickChoices]
+        value["loginStatus"] = LaunchAtLogin.statusCode
+        if !loginReceipt.isEmpty { value["login"] = loginReceipt }
+        if !lastResult.isEmpty { value["lastRequest"] = lastResult }
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else { return }
+        try? FileManager.default.createDirectory(at: Self.stateURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? data.write(to: Self.stateURL, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.stateURL.path)
+        DistributedNotificationCenter.default().postNotificationName(Self.stateName, object: Self.userObject, userInfo: value, deliverImmediately: true)
+    }
+
+    private func finish(_ id: String, status: String, latency: Double? = nil) {
+        if pendingID == id { pendingID = nil }
+        lastResult = ["requestID": id, "status": status, "t": Date().timeIntervalSince1970]
+        if let latency { lastResult["requestToVisibleMs"] = latency }
+        if !id.isEmpty { handledIDs.append(id); if handledIDs.count > 64 { handledIDs.removeFirst() } }
+        publish()
+    }
+
+    private func receive(_ request: [AnyHashable: Any]) {
+        guard let command = request["command"] as? String, ["show-picker", "pick-emoji", "enable-login"].contains(command), let id = request["requestID"] as? String, !id.isEmpty else { return }
+        guard let issuedAt = request["issuedAt"] as? NSNumber,
+              TouchBarRequestPolicy.validAge(issuedAt: issuedAt.doubleValue, now: Date().timeIntervalSince1970) else { finish(id, status: "request-expired"); return }
+        guard !handledIDs.contains(id), pendingID != id else { return }
+        if command == "enable-login" {
+            let result = LaunchAtLogin.enableIfNeeded()
+            loginReceipt = ["status": result.status, "error": result.error, "t": Date().timeIntervalSince1970,
+                            "requestID": id, "process": "running GUI app"]
+            finish(id, status: result.status == 1 ? "login-enabled" : (result.status == 2 ? "login-requires-approval" : "login-not-enabled"))
+            return
+        }
+        guard pendingID == nil else { finish(id, status: "busy"); return }
+        guard let expectedPID = request["expectedPID"] as? NSNumber,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == expectedPID.int32Value else { finish(id, status: "focus-changed"); return }
+        let cache = FocusedElementCache.shared
+        if let generation = request["focusGeneration"] as? NSNumber, generation.intValue != cache.bridgeFocusGeneration { finish(id, status: "stale-focus"); return }
+        if let instance = request["instanceID"] as? String, instance != instanceID { finish(id, status: "stale-instance"); return }
+        guard permissions.allGranted else { finish(id, status: "permissions-missing"); return }
+        guard engine.isActive, cache.haveFieldInfo, TouchBarRequestPolicy.isTextRole(cache.focusedRole), cache.focusedIsEditable, !cache.focusedIsSecure,
+              cache.focusedPID == expectedPID.int32Value, let cached = cache.element else { finish(id, status: "not-editable"); return }
+        // One bounded tap-time AX read validates the actual focused target; no text is read.
+        let app = AXUIElementCreateApplication(expectedPID.int32Value)
+        AXUIElementSetMessagingTimeout(app, 0.005)
+        var actual: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &actual) == .success,
+              let actual, CFGetTypeID(actual) == AXUIElementGetTypeID(), CFEqual(actual, cached) else { finish(id, status: "focus-unverified"); return }
+        if command == "pick-emoji" {
+            guard let hex = request["hex"] as? String, engine.bridgeQuickChoices.contains(where: { $0["hex"] == hex }) else { finish(id, status: "unknown-emoji"); return }
+            let inserted = engine.pickEmojiForBridge(hex: hex, expectedPID: expectedPID.int32Value, element: cached)
+            finish(id, status: inserted ? "insertion-requested" : "focus-changed"); return
+        }
+        guard !engine.bridgePickerVisible else { finish(id, status: "already-visible"); return }
+        pendingID = id
+        let started = ProcessInfo.processInfo.systemUptime
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.pendingID == id else { return }
+            self.engine.cancelBridgeOpen()
+            self.finish(id, status: "request-expired")
+        }
+        engine.showBrowserForBridge(expectedPID: expectedPID.int32Value, element: cached) { [weak self] shown in
+            guard let self, self.pendingID == id else { return }
+            self.finish(id, status: shown ? "visible" : "focus-changed", latency: shown ? (ProcessInfo.processInfo.systemUptime - started) * 1000 : nil)
+        }
+    }
+}
+
+/// Returns true after handling a bridge-only CLI request. Does not start event taps.
+@MainActor
+func handleTouchBarCLI() -> Bool {
+    let args = CommandLine.arguments
+    if args.contains("--bridge-status") {
+        if let data = try? Data(contentsOf: TouchBarBridge.stateURL), let text = String(data: data, encoding: .utf8) { print(text) }
+        else { print("{\"schema\":1,\"status\":\"not-running-or-no-state\"}") }
+        return true
+    }
+    let enableLogin = args.contains("--enable-login")
+    guard args.contains("--show-picker") || enableLogin else { return false }
+    guard !(args.contains("--show-picker") && enableLogin) else { print("Choose one bridge command"); return true }
+    func argument(_ name: String) -> String? { guard let i = args.firstIndex(of: name), args.indices.contains(i + 1) else { return nil }; return args[i + 1] }
+    var request: [String: Any] = ["command": enableLogin ? "enable-login" : "show-picker", "issuedAt": Date().timeIntervalSince1970, "requestID": argument("--request-id") ?? UUID().uuidString,
+        "expectedPID": Int(argument("--expected-pid") ?? "") ?? Int(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0)]
+    if let generation = argument("--focus-generation").flatMap(Int.init) { request["focusGeneration"] = generation }
+    if let instance = argument("--instance-id") { request["instanceID"] = instance }
+    let peers = NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == Bundle.main.bundleIdentifier && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+    if !peers.isEmpty {
+        DistributedNotificationCenter.default().postNotificationName(TouchBarBridge.requestName, object: TouchBarBridge.userObject, userInfo: request, deliverImmediately: true)
+        print("Bridge request sent; inspect bridge state for actual result")
+    } else if let data = try? JSONSerialization.data(withJSONObject: request) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.arguments = ["--bridge-background", "--bridge-initial-request", data.base64EncodedString()]
+        var complete = false
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
+            if let error { fputs("Background launch failed: \(error.localizedDescription)\n", stderr) }
+            complete = true
+        }
+        let deadline = Date().addingTimeInterval(3)
+        while !complete && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+        print(complete ? "Background bridge request dispatched; inspect bridge state" : "Background launch outcome pending")
+    }
+    return true
+}
+
+// Kept pure so delayed, replayed and future-dated requests have deterministic tests.
+enum TouchBarRequestPolicy {
+    static func isTextRole(_ role: String?) -> Bool {
+        guard let role else { return false }
+        return ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"].contains(role)
+    }
+    static func validAge(issuedAt: Double, now: Double) -> Bool {
+        let age = now - issuedAt
+        return issuedAt.isFinite && now.isFinite && age >= -0.25 && age <= 2
     }
 }

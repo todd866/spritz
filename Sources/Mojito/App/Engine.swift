@@ -1094,10 +1094,45 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     /// permissions (`isActive` is false then), refuse to act in a secure field,
     /// and clear any GIF picker that's up. If a `:query` capture is in flight,
     /// that text is already in the field and must be erased on pick.
+    var bridgeQuickChoices: [[String: String]] {
+        let fixed = UserDefaults.standard.stringArray(forKey: EmojiBrowserViewModel.numberedEmojiKey) ?? []
+        return fixed.prefix(6).compactMap { hex in
+            guard let emoji = database.byHexcode[hex] else { return nil }
+            return ["hex": emoji.hexcode, "glyph": emoji.tonedGlyph, "label": emoji.label]
+        }
+    }
+    func pickEmojiForBridge(hex: String, expectedPID: pid_t, element: AXUIElement) -> Bool {
+        let cache = FocusedElementCache.shared
+        guard isActive, NSWorkspace.shared.frontmostApplication?.processIdentifier == expectedPID,
+              let current = cache.element, CFEqual(current, element), cache.haveFieldInfo,
+              cache.focusedIsEditable, !cache.focusedIsSecure,
+              bridgeQuickChoices.contains(where: { $0["hex"] == hex }), let emoji = database.byHexcode[hex] else { return false }
+        let context = AppContextDetector.current()
+        guard context.focusedFieldHaveInfo, context.focusedFieldIsEditable, !context.focusedFieldIsSecure,
+              let actual = context.focusedElement, CFEqual(actual, element) else { return false }
+        captureContext = context; captureFocusSnapshot = element; captureFocusPID = expectedPID
+        browserDeleteCount = 0
+        pickFromBrowser(override: emoji)
+        return true
+    }
+
+    var bridgePickerVisible: Bool { viewModel.isVisible && viewModel.expanded }
+    private var bridgeOpen: (pid: pid_t, element: AXUIElement, completion: (Bool) -> Void)?
+    func cancelBridgeOpen() { if bridgeOpen != nil { collapseBrowser() } }
+    func showBrowserForBridge(expectedPID: pid_t, element: AXUIElement, completion: @escaping (Bool) -> Void) {
+        guard isActive else { completion(false); return }
+        bridgeOpen = (expectedPID, element, completion)
+        showBrowser()
+    }
+
     func showBrowser() {
         guard isActive else { return }
         let context = AppContextDetector.current()
-        if context.focusedFieldIsSecure {
+        // Only a field we have positively classified as secure blocks the
+        // explicit hotkey. Electron apps such as Codex leave the focused
+        // field unclassified, and the fail-closed default would make Fn do
+        // nothing there. The `:` trigger still waits for classification.
+        if context.focusedFieldHaveInfo && context.focusedFieldIsSecure {
             DebugRecorder.record(.engine, "secureFieldBlocked", [
                 "haveInfo": "\(context.focusedFieldHaveInfo)",
                 "role": context.focusedRole ?? "nil",
@@ -1155,7 +1190,16 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             let anchor = CaretLocator.caretRect()
             PickerContextStore.capture(caretOutcome: CaretLocator.lastOutcome, resolvedCaret: anchor)
             DebugRecorder.record(.picker, "browserOpen")
-            self.pickerWindow.showExpanded(near: anchor)
+            if let pending = self.bridgeOpen {
+                let cache = FocusedElementCache.shared
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pending.pid,
+                      let current = cache.element, CFEqual(current, pending.element),
+                      cache.haveFieldInfo, cache.focusedIsEditable, !cache.focusedIsSecure else {
+                    self.bridgeOpen = nil; self.collapseBrowser(); pending.completion(false); return
+                }
+                self.pickerWindow.showExpanded(near: anchor)
+                self.bridgeOpen = nil; pending.completion(true)
+            } else { self.pickerWindow.showExpanded(near: anchor) }
         }
     }
 
@@ -1187,7 +1231,14 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         // browser was opened over the Finder). The exclusion list doesn't apply
         // here — the global hotkey is an explicit action, so a pick types into
         // the focused field even in excluded apps.
-        let copy = !(captureContext?.focusedFieldIsEditable ?? true)
+        // Unclassified fields (Codex and other Electron apps) still accept
+        // synthetic keystrokes. Copy only when we know there is nowhere to type,
+        // or the field is a password field.
+        let copy: Bool = {
+            guard let context = captureContext, context.focusedFieldHaveInfo else { return false }
+            if context.focusedFieldIsSecure { return true }
+            return !context.focusedFieldIsEditable
+        }()
         if keepOpen {
             // Shift-pick: the grid stays up. Nothing selected (e.g. a
             // no-match search) → keep the pending delete span intact for a
@@ -1219,10 +1270,12 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     private func collapseBrowser() {
+        let pending = bridgeOpen; bridgeOpen = nil
         stateMachine.reset()
         viewModel.reset()
         pickerWindow.hide()
         clearCaptureState()
+        pending?.completion(false)
     }
 
     private func updateResults(query: String, scope: CaptureScope) {

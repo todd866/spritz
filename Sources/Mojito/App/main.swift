@@ -13,6 +13,8 @@ if isUnderXCTest {
     exit(0)
 }
 
+if MainActor.assumeIsolated({ handleTouchBarCLI() }) { exit(0) }
+
 // Explicit offscreen preview path: no event tap, permissions, updater, or
 // visible windows. The production SwiftUI view is rendered at its real size.
 if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
@@ -28,7 +30,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
         previewDefaults.set(Dictionary(uniqueKeysWithValues: demo.enumerated().map { ($0.element, 100 - $0.offset) }), forKey: PrefsKey.usageCounts)
         previewDefaults.set(demo.reversed().map { $0 }, forKey: PrefsKey.recentEmoji)
         for dark in [false, true] {
-            for scenario in ["mostUsed", "recent", "all", "search", "emptySearch", "largeText", "suggested", "general", "privacy"] {
+            for scenario in ["mostUsed", "recent", "all", "search", "emptySearch", "largeText", "suggested", "category", "modeReset", "general", "privacy"] {
                 let browser = EmojiBrowserViewModel(database: .shared, quickAccess: QuickAccessStore(defaults: previewDefaults), defaults: previewDefaults, contextText: scenario == "suggested" ? "happy birthday cake party" : nil)
                 if scenario == "recent" { browser.selectMode(.recent) }
                 if scenario == "all" { browser.selectMode(.all) }
@@ -55,6 +57,15 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
                 hosting.setFrameSize(size)
                 hosting.layoutSubtreeIfNeeded()
                 RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+                if scenario == "category" || scenario == "modeReset" {
+                    browser.selectCategory(.flags)
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+                    if scenario == "modeReset" {
+                        browser.selectMode(.recent)
+                        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+                    }
+                    hosting.layoutSubtreeIfNeeded()
+                }
                 guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { fatalError("No bitmap") }
                 hosting.cacheDisplay(in: hosting.bounds, to: rep)
                 guard let png = rep.representation(using: .png, properties: [:]) else { fatalError("No PNG") }

@@ -69,20 +69,16 @@ final class EmojiBrowserViewModel: ObservableObject {
     }
 
     /// The whole picker, not one page: the 1–0 slots, then the
-    /// current page of letters, then every remaining emoji with no key.
+    /// fixed letters, then every remaining emoji with no key.
     @Published private(set) var pickerSlots: [PickerSlot] = []
 
-    /// The shortcut row always starts with the stable 1–0 choices, followed by
-    /// one page of single-letter choices from the current mode.
+    /// Key routing uses the same slots that are drawn on screen.
     var shortcutItems: [ShortcutItem] {
-        var items: [ShortcutItem] = []
-        for (offset, emoji) in numberedSlots.enumerated() {
-            guard let emoji else { continue }
-            items.append(ShortcutItem(emoji: emoji, key: Self.numberKeys[offset]))
+        pickerSlots.compactMap { slot in
+            guard let emoji = slot.emoji, let key = slot.shortcut?.first else { return nil }
+            return ShortcutItem(emoji: emoji, key: key)
         }
-        return items + (shortcutPages.indices.contains(shortcutPageIndex) ? shortcutPages[shortcutPageIndex] : [])
     }
-    static let shortcutLetterPageSize = 26
     static let letterBindingsKey = "mojito.letterBindings"
     /// Hexcodes the user has taken off the keyboard. They stay visible and
     /// are not given a new letter the next time the picker opens.
@@ -93,28 +89,6 @@ final class EmojiBrowserViewModel: ObservableObject {
     /// given to another emoji the next time the picker opens.
     private var releasedLetters: Set<Character> = []
     private let defaults: UserDefaults
-    private var shortcutPages: [[ShortcutItem]] = []
-    @Published private(set) var shortcutPageIndex: Int = 0
-    var shortcutPageCount: Int { max(1, shortcutPages.count) }
-
-    /// Pack ranked choices onto pages without ever relabelling a collision.
-    /// Cached when the corpus changes, so keystrokes and rendering only read it.
-    private func rebuildShortcutPages() {
-        let excluded = Set(quickSuggestions.map(\.hexcode))
-        var seen = Set<String>()
-        var pages: [[ShortcutItem]] = []
-        var keys: [Set<Character>] = []
-        for emoji in current where !excluded.contains(emoji.hexcode) && seen.insert(emoji.hexcode).inserted {
-            guard let canonical = EmojiLetterBindings.canonicalHex(emoji.hexcode), let value = letterBindings[canonical], let key = value.first else { continue }
-            let page = keys.firstIndex(where: { !$0.contains(key) }) ?? pages.count
-            if page == pages.count { pages.append([]); keys.append([]) }
-            pages[page].append(ShortcutItem(emoji: emoji, key: key))
-            keys[page].insert(key)
-        }
-        shortcutPages = pages
-        publishPickerSlots()
-    }
-
     private func publishPickerSlots() {
         var slots: [PickerSlot] = []
         var shown = Set<String>()
@@ -127,10 +101,9 @@ final class EmojiBrowserViewModel: ObservableObject {
                 slots.append(PickerSlot(id: "number-\(label)", emoji: nil, shortcut: label))
             }
         }
-        let assigned = Dictionary(grouping: shortcutPages.first ?? [], by: \.key)
         for letter in Self.letterKeys {
-            if let item = assigned[letter]?.first, shown.insert(item.emoji.hexcode).inserted {
-                slots.append(PickerSlot(id: item.emoji.hexcode, emoji: item.emoji, shortcut: String(letter)))
+            if let emoji = letterSlotEmoji(letter), shown.insert(emoji.hexcode).inserted {
+                slots.append(PickerSlot(id: emoji.hexcode, emoji: emoji, shortcut: String(letter)))
             } else {
                 slots.append(PickerSlot(id: "letter-\(letter)", emoji: nil, shortcut: String(letter)))
             }
@@ -138,9 +111,6 @@ final class EmojiBrowserViewModel: ObservableObject {
         func appendUnkeyed(_ emoji: Emoji) {
             guard shown.insert(emoji.hexcode).inserted else { return }
             slots.append(PickerSlot(id: emoji.hexcode, emoji: emoji, shortcut: nil))
-        }
-        for page in shortcutPages.dropFirst() {
-            for item in page { appendUnkeyed(item.emoji) }
         }
         for emoji in current { appendUnkeyed(emoji) }
         if !current.isEmpty && slots.count < Self.minimumShortcutSlots {
@@ -165,7 +135,6 @@ final class EmojiBrowserViewModel: ObservableObject {
         mode = value
         categoryTarget = nil
         exitSearch(notify: false)
-        shortcutPageIndex = 0
         shortcutSelectedIndex = 0
         onModeChange?()
         setActiveCategory(sections.first?.category ?? .smileysPeople)
@@ -185,15 +154,10 @@ final class EmojiBrowserViewModel: ObservableObject {
         hoverIndex = nil
         selectedIndex = 0
         shortcutSelectedIndex = 0
-        shortcutPageIndex = 0
         scrollTarget = 0
+        keyboardScrollIndex = 0
         selectionStale = false
         if notify && wasActive { onSearchModeChange?(false) }
-    }
-
-    func changeShortcutPage(by delta: Int) {
-        shortcutPageIndex = min(max(0, shortcutPageIndex + delta), shortcutPageCount - 1)
-        shortcutSelectedIndex = 0
     }
 
     func emojiForShortcut(_ key: Character) -> Emoji? {
@@ -204,6 +168,12 @@ final class EmojiBrowserViewModel: ObservableObject {
         let lowered = String(key).lowercased()
         guard lowered.count == 1, let normalized = lowered.first else { return nil }
         return shortcutItems.first(where: { $0.key == normalized })?.emoji
+    }
+
+    /// Each letter has one persisted owner, independent of the current tab.
+    private func letterSlotEmoji(_ letter: Character) -> Emoji? {
+        guard let hex = letterBindings.first(where: { $0.value == String(letter) })?.key else { return nil }
+        return database.byHexcode[hex]
     }
 
     /// Drop `sourceHex` onto another emoji. A keyed target takes or swaps that
@@ -230,7 +200,7 @@ final class EmojiBrowserViewModel: ObservableObject {
             swapNumberAndLetter(number: index, letter: letter, numberHex: targetHex, letterHex: sourceHex)
         }
         saveShortcutEdits()
-        rebuildShortcutPages()
+        publishPickerSlots()
     }
 
     /// Drop onto the open area under the grid. Removes the source shortcut.
@@ -238,7 +208,7 @@ final class EmojiBrowserViewModel: ObservableObject {
         guard let sourceKey = visibleKey(for: sourceHex) else { return }
         releaseKey(sourceKey)
         saveShortcutEdits()
-        rebuildShortcutPages()
+        publishPickerSlots()
     }
 
     /// Drop onto an empty number cell, which assigns that number.
@@ -250,19 +220,18 @@ final class EmojiBrowserViewModel: ObservableObject {
         }
         placeNumber(index, on: sourceHex)
         saveShortcutEdits()
-        rebuildShortcutPages()
+        publishPickerSlots()
     }
 
-    /// Drop onto an empty letter cell, which assigns that letter and no other.
+    /// Assign a letter, releasing its previous owner if necessary.
     func dropShortcut(from sourceHex: String, ontoEmptyLetter letter: Character) {
-        guard database.byHexcode[sourceHex] != nil,
-              !letterBindings.values.contains(String(letter)) else { return }
+        guard Self.letterKeys.contains(letter), database.byHexcode[sourceHex] != nil else { return }
         if let sourceKey = visibleKey(for: sourceHex) {
             vacate(sourceKey, hex: sourceHex)
         }
         placeLetter(letter, on: sourceHex)
         saveShortcutEdits()
-        rebuildShortcutPages()
+        publishPickerSlots()
     }
 
     private enum VisibleKey {
@@ -274,10 +243,10 @@ final class EmojiBrowserViewModel: ObservableObject {
         if let index = numberedSlots.firstIndex(where: { $0?.hexcode == hex }) {
             return .number(index)
         }
-        if let item = shortcutPages.first?.first(where: { $0.emoji.hexcode == hex }) {
-            return .letter(item.key)
-        }
-        return nil
+        guard let value = letterBindings[canonical(hex)]?.first,
+              let owner = letterSlotEmoji(value),
+              canonical(owner.hexcode) == canonical(hex) else { return nil }
+        return .letter(value)
     }
 
     private func canonical(_ hex: String) -> String {
@@ -504,7 +473,7 @@ final class EmojiBrowserViewModel: ObservableObject {
         var savedLetters = (defaults.dictionary(forKey: Self.letterBindingsKey) as? [String: String]) ?? [:]
         for hex in released { savedLetters.removeValue(forKey: hex) }
         self.letterBindings = EmojiLetterBindings.resolve(
-            candidates: (ranked + flat).filter {
+            candidates: (ranked + flat + savedLetters.keys.sorted().compactMap { database.byHexcode[$0] }).filter {
                 !numbered.contains($0.hexcode)
                     && !released.contains(EmojiLetterBindings.canonicalHex($0.hexcode) ?? $0.hexcode)
             },
@@ -522,7 +491,7 @@ final class EmojiBrowserViewModel: ObservableObject {
         let subject = CurrentValueSubject<EmojiCategory, Never>(built.first?.category ?? .smileysPeople)
         self.activeCategorySubject = subject
         self.activeCategoryPublisher = subject.eraseToAnyPublisher()
-        rebuildShortcutPages()
+        publishPickerSlots()
     }
 
     /// The addressable list for selection + keyboard nav: search results when
@@ -531,7 +500,7 @@ final class EmojiBrowserViewModel: ObservableObject {
     /// reads it several times per render, so it must not re-run the fuzzy
     /// search on each access.
     @Published private(set) var current: [Emoji] {
-        didSet { rebuildShortcutPages() }
+        didSet { publishPickerSlots() }
     }
 
     private func computeCurrent() -> [Emoji] {
@@ -595,7 +564,6 @@ final class EmojiBrowserViewModel: ObservableObject {
         current = computeCurrent()
         selectedIndex = 0
         shortcutSelectedIndex = 0
-        shortcutPageIndex = 0
         scrollTarget = 0  // back to top on every query change
         selectionStale = false
     }
@@ -609,20 +577,27 @@ final class EmojiBrowserViewModel: ObservableObject {
         query = ""
         searchInputActive = !supportsShortcuts
         if wasSearching { onSearchModeChange?(false) }
-        shortcutPageIndex = 0
         shortcutSelectedIndex = 0
         current = computeCurrent()  // → whole library
         if let section = sections.first(where: { $0.category == category }) {
             selectedIndex = section.startIndex
-            if supportsShortcuts, let first = section.cells.first?.emoji,
-               let index = pickerSlots.firstIndex(where: { $0.emoji?.hexcode == first.hexcode }) {
-                shortcutSelectedIndex = index
+            if supportsShortcuts {
+                let members = Set(section.cells.map { $0.emoji.hexcode })
+                // Prefer the category's catalogue rows over a pinned key at
+                // the top, otherwise a category tap can jump to the key bank.
+                let index = pickerSlots.firstIndex { slot in
+                    slot.shortcut == nil && slot.emoji.map { members.contains($0.hexcode) } == true
+                } ?? pickerSlots.firstIndex { slot in
+                    slot.emoji.map { members.contains($0.hexcode) } == true
+                }
+                if let index { shortcutSelectedIndex = index }
             }
         }
         // If we were searching the list was a flat result grid; rebuilding the
         // sectioned list first, then jumping, keeps the target laid out.
         setActiveCategory(category)
-        categoryTarget = category
+        categoryTarget = supportsShortcuts ? nil : category
+        if supportsShortcuts { keyboardScrollIndex = shortcutSelectedIndex }
         selectionStale = false  // tab tap is an explicit selection action
         if wasSearching { scrollTarget = nil }
     }

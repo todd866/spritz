@@ -205,13 +205,20 @@ struct InlineBrowserView: View {
                 .scrollClipDisabled(true)
                 .coordinateSpace(name: Self.pickerGridSpace)
                 .onChange(of: browser.keyboardScrollIndex) { _, index in
-                    guard let index, browser.pickerSlots.indices.contains(index) else { return }
-                    proxy.scrollTo(browser.pickerSlots[index].id)
-                    browser.keyboardScrollIndex = nil
+                    scrollShortcutGrid(proxy, to: index)
+                }
+                .onAppear {
+                    scrollShortcutGrid(proxy, to: browser.keyboardScrollIndex)
                 }
             }
             if browser.mode == .all { categoryBar }
         }
+    }
+
+    private func scrollShortcutGrid(_ proxy: ScrollViewProxy, to index: Int?) {
+        guard let index, browser.pickerSlots.indices.contains(index) else { return }
+        proxy.scrollTo(browser.pickerSlots[index].id, anchor: .top)
+        browser.keyboardScrollIndex = nil
     }
 
     /// Layout frames of the shortcut cells, written by the cells and read when
@@ -382,6 +389,7 @@ private struct SlotFrameReporter: View {
         GeometryReader { geo in
             Color.clear
                 .onAppear { frames.values[id] = geo.frame(in: .named(InlineBrowserView.pickerGridSpace)) }
+                .onDisappear { frames.values.removeValue(forKey: id) }
                 .onChange(of: geo.frame(in: .named(InlineBrowserView.pickerGridSpace))) { _, frame in
                     frames.values[id] = frame
                 }
