@@ -1,6 +1,6 @@
 # Spritz
 
-A macOS emoji picker with **one-key selection** and persistent mnemonic letters. This is an independent fork of [Mojito by Wells Riley](https://github.com/wr/mojito), based on v1.10.1.
+A macOS emoji picker with **one-key selection**, persistent mnemonic letters, and **Fn dictation with text alternatives**. This is an independent fork of [Mojito by Wells Riley](https://github.com/wr/mojito), based on v1.10.1.
 
 ![Spritz picker with number keys 1–0 and letters a–z](docs/picker.png)
 
@@ -32,17 +32,41 @@ The app is built at `~/Library/Caches/MojitoFork/Derived/Build/Products/Debug/Sp
 
 The fork uses `io.github.todd866.Spritz` / `.dev` bundle identities. It needs its own Accessibility and Input Monitoring permissions. Run only one emoji picker at a time to avoid competing shortcuts. No private signing credentials or API keys are included.
 
-## Fn / Globe setup
+## Fn / Globe and dictation (0.4.1)
 
-Set an Emoji Browser shortcut in General settings. Mojito also provides a “Press Globe key to open Mojito” option. If a keyboard or macOS configuration does not reliably deliver that event, map a **tap** of Fn to your browser shortcut with Karabiner-Elements, keeping a held Fn unchanged. This fork does not modify Karabiner or system settings automatically.
+Enable the Globe-key browser option in General settings and grant Accessibility and Input Monitoring access. For Apple speech, also grant Microphone and Speech Recognition access when prompted. Remove conflicting Fn remaps: a legacy Karabiner rule that changes held Fn can prevent dictation. Spritz does not change system shortcuts or Karabiner settings automatically.
 
-A tested setup uses Control–Option–Space as the browser shortcut and maps an Fn tap to it. Test insertion in a normal text field after granting permissions.
+- **Tap Fn:** open the combined emoji picker and text-alternatives panel.
+- **Hold Fn, speak, release:** dictate using the selected speech input.
+- **Tab / Shift-Tab with the picker open:** preview the available text alternatives without changing the draft.
+- **Enter after previewing text:** apply that alternative. **Use** does the same; if safe replacement cannot be verified, **Copy** is offered instead.
+- **Escape:** dismiss the picker without applying the preview. Typing or navigating emojis returns Enter to emoji selection.
+
+General settings offers three speech-input modes:
+
+| Mode | Audio recognition and insertion |
+| --- | --- |
+| Apple | On-device Apple recognition; Spritz inserts the transcript. |
+| ChatGPT Dictate | The installed ChatGPT/Codex app owns audio recognition and insertion. Configure its native hold-to-dictate shortcut to Fn first. |
+| Apple + ChatGPT | Capture an Apple alternative alongside native Dictate; only native Dictate inserts the initial text. |
+
+Native Dictate is an integration with the installed app's shortcut, not a bundled transcription API. It requires that app's dictation feature and your account access. Spritz does not extract subscription credentials or configure new API billing.
+
+Optional **Speech alternatives** uses the installed, signed-in Codex or Claude CLI, or can be set to Off. After a captured native insertion, it automatically reviews the whole dictated passage and compares the Apple transcript when available. The picker offers **Apple**, **GPT**, and **Reviewed** as results become available. Reviewed analyses text; it does not listen to the audio again. Apple-only mode offers Apple, Corrected and Clearer. New results never replace your draft automatically.
+
+**Current limitations:** this is experimental. Native insertion capture and the Reviewed option are not yet reliable on every attempt; the panel can remain on “Waiting for dictation.” A deeper review has taken roughly 8–12 seconds in local tests. Only captured sources appear, and dictation accuracy varies, particularly with specialist terminology and background noise. Medical corrections can be wrong: inspect the actual wording and uncertainty notes before applying it. The explicit **Analyse text** button reviews the entire current draft when automatic capture misses it.
+
+Replacement requires the same non-password editable field, unchanged field contents and unchanged caret. Otherwise use Copy. Text alternatives expire after two minutes and are cleared on app/field changes and sleep/lock. Full passages scroll inside the panel.
 
 ## Privacy and updates
 
 Emoji counts, recent choices and key assignments stay in local preferences. Surrounding-text suggestions read a short preceding range from supported non-password fields; the transient context expires and is not written to disk or sent over the network. Some apps do not expose a caret or text context, so placement and suggestions vary by app.
 
-The fork disables telemetry collection/upload and automatic updates to the upstream app. “Check now” opens this fork's GitHub releases. Optional GIF search requires your own KLIPY API key and sends GIF search terms to KLIPY; emoji selection needs no network connection.
+The fork disables upstream telemetry upload and automatic updates to the upstream app. Spritz now records **local-only operational telemetry**: aggregate counts and timing for picker, speech and review actions, retained for 90 UTC days at `~/Library/Application Support/Spritz/telemetry.json`. It contains no transcripts, audio, app names, field contents, credentials or raw errors and is not uploaded. Inspect it by running the app executable with `--telemetry`.
+
+Apple recognition runs on-device. Native Dictate handles audio under its own service settings and policies. Optional CLI review sends the captured transcript and available Apple alternative to the selected provider; **Analyse text** explicitly sends the whole current draft. Spritz keeps text and replacement snapshots in memory only, uses ephemeral CLI sessions, and does not write transcript files. Provider data policies still apply.
+
+ “Check now” opens this fork's GitHub releases. Optional GIF search requires your own KLIPY API key and sends GIF search terms to KLIPY; emoji selection needs no network connection.
 
 Your Apple emoji history is not imported automatically. No developer's personal emoji history or preference exports are included.
 
@@ -52,6 +76,6 @@ Report issues and propose improvements in [this fork](https://github.com/todd866
 
 ## Credits and licence
 
-Original Mojito © 2026 Wells Riley. Fork modifications © 2026 Ian Todd. Modified October 2026. Licensed under [GNU AGPL v3](LICENSE); the original licence and attribution are retained.
+Original Mojito © 2026 Wells Riley. Fork modifications © 2026 Ian Todd. Modified November 2026. Licensed under [GNU AGPL v3](LICENSE); the original licence and attribution are retained.
 
 Mojito builds on emojibase, [Emoogle](https://github.com/xitanggg/emoogle-emoji-search-engine), Sparkle, KeyboardShortcuts, KLIPY, and a Swift port of fzy. To support the original author, see [Wells Workshop](https://buymeacoffee.com/wellsworkshop).
