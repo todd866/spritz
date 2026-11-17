@@ -1,0 +1,1 @@
+{"type":"object","properties":{"cleaned":{"type":"string"},"clearer":{"type":"string"}},"required":["cleaned","clearer"],"additionalProperties":false}

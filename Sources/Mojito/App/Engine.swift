@@ -299,6 +299,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     private func handleFocusChanged() {
+        DictationAlternatives.shared.clear()
         invalidateContextSuggestions()
         pendingEmoticonUndo = nil
         // The browser owns the keyboard while open and a pick is synthesized
@@ -479,6 +480,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     func stop() {
+        DictationAlternatives.shared.clear()
         speechDeliveryGeneration &+= 1
         SpeechController.shared.cancel()
         monitor.stop()
@@ -577,7 +579,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             self.speechDeliveryGeneration &+= 1
             SpeechController.shared.cancel()
             LocalTelemetry.shared.record(.fnTap)
-            self.toggleBrowser()
+            if !DictationAlternatives.shared.toggle(emoji: { [weak self] in self?.toggleBrowser() }) { self.toggleBrowser() }
         }
     }
 
@@ -588,6 +590,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             case .start:
                 guard SystemEmojiPickerReplacer.shared.globeOpensBrowser, self.isActive else { return }
                 self.speechDeliveryGeneration &+= 1
+                DictationAlternatives.shared.clear()
                 let delivery = self.speechDeliveryGeneration
                 speech.cancel()
                 LocalTelemetry.shared.record(.fnHold)
@@ -628,6 +631,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
                             }
                             TextInserter.replace(charactersToDelete: 0, with: text)
                             LocalTelemetry.shared.record(.speechInsertion)
+                            DictationAlternatives.shared.begin(text: text, element: element, pid: pid)
                         }
                     }
                 }
@@ -642,6 +646,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     private func process(input: TriggerInput) -> Bool {
+        if DictationAlternatives.shared.handle(input) { return true }
         speechDeliveryGeneration &+= 1
         if SpeechController.shared.isActive {
             SpeechController.shared.cancel()

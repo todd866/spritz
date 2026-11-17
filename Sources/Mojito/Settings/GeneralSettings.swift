@@ -2,6 +2,7 @@ import SwiftUI
 import KeyboardShortcuts
 
 struct GeneralSettingsView: View {
+    @ObservedObject private var alternatives = DictationAlternatives.shared
     @AppStorage(PrefsKey.launchAtLogin) private var launchAtLogin: Bool = false
     @AppStorage(PrefsKey.showMenuBarIcon) private var showMenuBarIcon: Bool = true
     @AppStorage(PrefsKey.useFrequencyBoost) private var useFrequencyBoost: Bool = true
@@ -47,6 +48,10 @@ struct GeneralSettingsView: View {
                     }
                 }
                 .toggleStyle(.switch)
+
+                Picker("Speech alternatives", selection: $alternatives.provider) {
+                    ForEach(RefinementProvider.allCases) { Text($0.rawValue).tag($0) }
+                }
 
                 LabeledContent {
                     Button("Check now") {

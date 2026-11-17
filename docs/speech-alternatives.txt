@@ -1,0 +1,17 @@
+Speech alternatives — Spritz 0.3.0
+
+Hold Fn: Apple on-device recognition inserts the first transcript. No audio goes to an AI provider. After insertion, one background request to the selected authenticated CLI asks for Cleaned and Clearer wording. It does not listen again or recover missing audio. The original stays available.
+
+Tap Fn within two minutes in the same field: Original / Cleaned / Clearer. Choose with 1–3 or arrows and Return; Escape closes. Emoji opens the normal browser. Other typing closes the panel and makes subsequent choices copy-only. The full text scrolls inside the panel, with the top controls fixed. Copy is always explicit.
+
+Replacement requires the original field identity and app, a nonsecure editable field, an exact in-memory field snapshot and unchanged caret. AX read failure, any text change, or moved caret means Copy, never deletion. A second click is ignored while verification is in flight. Session and input revisions reject late callbacks. App/field changes, sleep/lock, new dictation and the two-minute expiry clear the session and cancel the request. The original can be restored while the replacement receipt remains valid.
+
+Settings > General > Speech alternatives: Codex (default), Claude, Off. Uses the installed official CLI and its existing login in place, without extracting or exporting credentials. Codex uses its configured model with low reasoning effort. Claude uses its configured model. No automatic fan-out or provider fallback. A provider must already be signed in; Unavailable preserves the original and allows Retry. No new API billing is configured.
+
+Codex: ephemeral exec, read-only, structured JSON, tools/apps/plugins/web and configured MCP servers disabled. Claude: print mode, empty tools and MCP configuration, no session persistence, structured JSON. Prompts and results use pipes; stderr is discarded. 45-second deadline; cancelled owned children are terminated and reaped. Only the transcript is supplied; no surrounding field text. Spritz retains transcript/options and the replacement receipt in memory only, up to two minutes. Provider retention policies still apply. Candidate text is never silently accepted.
+
+Local telemetry retains aggregate counts/timing for 90 UTC days, including refinement start/ready/failure/cancel/chosen/copy. No transcript, audio, app name, field text, raw errors or credential is logged.
+
+Validation: 379 tests passed including the final MCP nested-table regression check. The actual app integration returned both structured options through the existing Codex subscription in 7.9 seconds on a synthetic sentence. Independent Cursor review accepted session cancellation and credential non-extraction; its double-delivery concern was already blocked by serialized main-actor revision checks, and an explicit in-flight latch now also avoids duplicate AX work. Its proposed UTF-16 deletion length was rejected: AX ranges use UTF-16 but TextInserter sends one backspace per grapheme, so UTF-16 would over-delete emoji. Config file reads moved off the event thread. Tests exercise Unicode receipts, edits elsewhere, moved carets, invalid responses, stale cancellation and timeout/late-result delivery. Final build and live synthetic provider check recorded separately in the session checkpoint.
+
+0.2.1 focus fix: owner confirmed text appears in Codex after the off-thread 100 ms focus lookup fix. Background music still caused recognition mistakes. This is an accuracy limitation, distinct from insertion failure.

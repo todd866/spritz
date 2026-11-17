@@ -166,6 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        DictationAlternatives.shared.clear()
         SpeechController.shared.cancel()
         LocalTelemetry.shared.flush()
         os_log("applicationWillTerminate", log: log, type: .info)
