@@ -61,7 +61,7 @@ def main() -> int:
         failures.append("TelemetryConsent.presentIfNeeded() is not a no-op")
 
     forbidden = re.compile(r"URLSession|URLRequest|dataTask|httpMethod|stats\.mojito|telemetry\.wells", re.IGNORECASE)
-    for label, text in (("TelemetryStore", store), ("TelemetryUploader", uploader), ("TelemetryConsent", consent)):
+    for label, text in (("TelemetryStore", store), ("TelemetryUploader", uploader), ("TelemetryConsent", consent), ("LocalTelemetry", (TELEMETRY / "LocalTelemetry.swift").read_text())):
         if forbidden.search(text):
             failures.append(f"{label} contains a telemetry networking path")
 
@@ -70,7 +70,7 @@ def main() -> int:
             fail(failure)
         return 1
 
-    print("✓ fork telemetry disabled — no recording, upload, consent prompt, or telemetry endpoint")
+    print("✓ upstream telemetry disabled; local aggregate telemetry has no networking")
     return 0
 
 

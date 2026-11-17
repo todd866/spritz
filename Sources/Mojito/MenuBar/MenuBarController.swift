@@ -33,6 +33,15 @@ final class MenuBarController {
         self.permissions = permissions
         self.openSettings = openSettings
 
+        SpeechController.shared.$status.receive(on: RunLoop.main).sink { [weak self] status in
+            self?.applyStatusIcon(); self?.refreshMenu()
+            self?.statusItem?.button?.toolTip = status.isEmpty ? "Fn: tap emoji · hold speech" : status
+            let speech = SpeechController.shared
+            self?.statusItem?.button?.title = speech.isActive
+                ? (speech.isListening ? " Listening" : (status.hasPrefix("Finishing") ? " Finishing" : " Preparing")) : ""
+        }.store(in: &observers)
+        _ = LocalTelemetry.shared
+
         engine.$isActive
             .combineLatest(permissions.$accessibility, permissions.$inputMonitoring)
             .receive(on: RunLoop.main)
@@ -192,6 +201,7 @@ final class MenuBarController {
         browse.setShortcut(for: .showEmojiBrowser)
         menu.addItem(browse)
         browseItem = browse
+        menu.addItem(NSMenuItem(title: "Copy local telemetry", action: #selector(MenuActions.copyTelemetry), keyEquivalent: "").configured(target: MenuActions.shared))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: String(localized: "Settings…"), action: #selector(MenuActions.openSettings), keyEquivalent: ",").configured(target: MenuActions.shared))
         // Option-held alternate — backdoor for re-running guided setup
@@ -260,6 +270,7 @@ final class MenuBarController {
         let permissionsOK = (permissions?.allGranted) ?? false
         let name = AppInfo.displayName
         let title: String = {
+            if !SpeechController.shared.status.isEmpty { return SpeechController.shared.status }
             if !permissionsOK { return String(localized: "\(name) needs permission") }
             if let until = engine?.pausedUntil, until > Date() { return String(localized: "\(name) is paused") }
             return active
@@ -319,6 +330,11 @@ private final class MenuActions: NSObject {
         self.controller = controller
     }
 
+    @objc func copyTelemetry() {
+        LocalTelemetry.shared.flush()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(LocalTelemetry.shared.report(), forType: .string)
+    }
     @objc func pauseHour() { controller?.performPauseHour() }
     @objc func pauseUntilTomorrow() { controller?.performPauseUntilTomorrow() }
     @objc func resume() { controller?.performResume() }

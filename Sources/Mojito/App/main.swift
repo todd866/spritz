@@ -13,6 +13,10 @@ if isUnderXCTest {
     exit(0)
 }
 
+if CommandLine.arguments.contains("--telemetry") {
+    MainActor.assumeIsolated { print(LocalTelemetry.shared.report()) }
+    exit(0)
+}
 if MainActor.assumeIsolated({ handleTouchBarCLI() }) { exit(0) }
 
 // Explicit offscreen preview path: no event tap, permissions, updater, or
@@ -30,7 +34,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
         previewDefaults.set(Dictionary(uniqueKeysWithValues: demo.enumerated().map { ($0.element, 100 - $0.offset) }), forKey: PrefsKey.usageCounts)
         previewDefaults.set(demo.reversed().map { $0 }, forKey: PrefsKey.recentEmoji)
         for dark in [false, true] {
-            for scenario in ["mostUsed", "recent", "all", "search", "emptySearch", "largeText", "suggested", "category", "modeReset", "general", "privacy"] {
+            for scenario in ["mostUsed", "recent", "all", "search", "emptySearch", "largeText", "suggested", "category", "modeReset", "general", "privacy", "fn"] {
                 let browser = EmojiBrowserViewModel(database: .shared, quickAccess: QuickAccessStore(defaults: previewDefaults), defaults: previewDefaults, contextText: scenario == "suggested" ? "happy birthday cake party" : nil)
                 if scenario == "recent" { browser.selectMode(.recent) }
                 if scenario == "all" { browser.selectMode(.all) }
@@ -38,7 +42,9 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
                 if scenario == "emptySearch" { browser.setQuery("zzqxzzqxzzqx") }
                 let content = InlineBrowserView(browser: browser, onPick: { _ in }, onCategory: { browser.selectCategory($0) })
                 let view = VStack(spacing: 0) {
-                    if scenario == "general" {
+                    if scenario == "fn" {
+                        Form { EmojiBrowserHotkeyRow() }.formStyle(.grouped)
+                    } else if scenario == "general" {
                         GeneralSettingsView()
                     } else if scenario == "privacy" {
                         Form { PrivacyDetailsRows() }.formStyle(.grouped)
@@ -50,7 +56,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
                     .environment(\.sizeCategory, scenario == "largeText" ? .accessibilityExtraExtraExtraLarge : .large)
                     .background(dark ? Color(red: 0.13, green: 0.13, blue: 0.14) : Color(red: 0.96, green: 0.96, blue: 0.97))
                 let hosting = NSHostingView(rootView: view)
-                let size = ["general", "privacy"].contains(scenario) ? NSSize(width: 650, height: 700) : NSSize(width: BrowserLayout.width, height: BrowserLayout.height)
+                let size = scenario == "fn" ? NSSize(width: 650, height: 240) : ["general", "privacy"].contains(scenario) ? NSSize(width: 650, height: 700) : NSSize(width: BrowserLayout.width, height: BrowserLayout.height)
                 let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
                 window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 window.contentView = hosting

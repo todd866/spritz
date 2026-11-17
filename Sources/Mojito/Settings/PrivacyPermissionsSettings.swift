@@ -94,7 +94,7 @@ struct PrivacyDetailsRows: View {
         privacyRow(
             icon: "eye.slash",
             title: "Local emoji history",
-            detail: "Emoji history and suggestions stay on your Mac. GIF search terms go to KLIPY."
+            detail: "Emoji history, speech and 90-day usage counts stay on this Mac. Audio and transcripts are not saved. GIF searches go to KLIPY."
         )
         privacyRow(
             icon: "dollarsign.circle",

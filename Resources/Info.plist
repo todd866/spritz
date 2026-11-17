@@ -34,6 +34,10 @@
 	<string>Spritz reads the current tab's URL in Arc to apply your per-site exclusions.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Wells Workshop LLC</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hold Fn to dictate text on this Mac. Audio is not saved.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Spritz converts speech to text on this Mac while you hold Fn.</string>
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 </dict>

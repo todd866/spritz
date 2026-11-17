@@ -68,6 +68,9 @@ enum DebugRecorder {
         _ kind: String,
         _ metadata: [String: String] = [:]
     ) {
+        if category == .picker && (kind == "open" || kind == "browserOpen") { LocalTelemetry.shared.record(.pickerOpen) }
+        if category == .picker && kind == "cancel" { LocalTelemetry.shared.record(.pickerCancel) }
+        if category == .insert && (kind == "replace" || kind == "paste") { LocalTelemetry.shared.record(.insertionAttempt) }
         var meta = metadata
         // Stamp which app was frontmost so every action line answers
         // "where did this happen" on its own — no cross-referencing the

@@ -1,0 +1,39 @@
+Fn speech and local telemetry — 17 November 2026
+
+Source checkout: ~/Projects/spritz. Baseline 9463043 preserves the nine modified
+files from Desktop/personal_admin/mojito-fork-release. Do not replace this with
+GitHub fork-release alone: that omits the installed fixed-slot/Touch Bar changes.
+
+Fn tap (<300 ms): emoji. Hold: on-device en-AU speech. Release: stop microphone
+and await final recognition, maximum 5 seconds. Wait for Listening before
+speaking. Escape, another key/chord, app/focus change, sleep, session resignation,
+audio reconfiguration, lost event tap and pause cancel. Recording has a 60-second
+limit. Re-hold cancels the previous session. No result inserts after cancellation.
+First use requests microphone and speech permission; it never begins recording
+following a permission dialog. Hold again after approving. Unsupported on-device
+recognition produces a visible menu status, never a cloud fallback.
+
+Insertion requires the same cached focus generation, process and editable,
+nonsecure AX element. A bounded actual-focus lookup checks again before posting.
+Unclassifiable text fields are rejected. Telemetry counts insertion attempts,
+not delivery confirmations. speechFocusRejected is separate from recognizer errors.
+
+Local telemetry: ~/Library/Application Support/Spritz/telemetry.json.
+UTC daily counts, 90-day retention; optional duration count/sum/max only.
+speechStart durations measure preparation; speechFinish durations measure release
+to final result. No transcript, audio, keystrokes, search text, app IDs, URLs or
+free-form errors. Debounced serial atomic writes, flush on normal termination.
+Malformed/unknown-schema files are preserved and flagged rather than overwritten.
+Upstream telemetry remains disabled. Existing emoji history is separate.
+Read: Spritz menu > Copy local telemetry, or
+/Applications/Spritz.app/Contents/MacOS/Spritz --telemetry
+The latter reads disk without launching the menu app or requesting permissions.
+
+Independent review: rapid re-hold callback replacement was corrected; releases
+before microphone readiness now cancel cleanly. Pure lifecycle tests cover stale
+callbacks, release-before-ready and restart. The review's proposed stop/start
+race was not accepted: capture start/stop execute on the SAME SERIAL queue, so a
+stop cannot interleave with start before engine assignment. No parallel audio
+graph mutation was introduced.
+
+Validation and installed revision: see task completion record.

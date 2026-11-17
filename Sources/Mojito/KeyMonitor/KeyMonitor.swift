@@ -13,6 +13,7 @@ protocol KeyMonitorDelegate: AnyObject {
     /// the key-up doesn't suppress the system panel anyway (macOS resolves
     /// Globe below the session tap), so suppression is handled by the
     /// AppleFnUsageType takeover instead.
+    func keyMonitor(_ monitor: KeyMonitor, fnAction: FnGesture.Action)
     func keyMonitorDidTapGlobeKey(_ monitor: KeyMonitor)
 }
 
@@ -24,11 +25,13 @@ final class KeyMonitor {
     private var runLoopSource: CFRunLoopSource?
     private(set) var isRunning = false
 
-    /// Lone Globe/Fn-tap detection: fn-down then fn-up within the threshold
-    /// with no key pressed in between. `nil` timestamp = no press in flight.
-    private var fnDownTimestamp: CGEventTimestamp?
-    private var fnTapInterrupted = false
-    private static let globeTapMaxDuration: CGEventTimestamp = 300_000_000  // ns
+    private var fnGesture = FnGesture()
+    private var fnTimer: DispatchWorkItem?
+    private func deliver(_ action: FnGesture.Action?) {
+        guard let action else { return }
+        if action == .tap { delegate?.keyMonitorDidTapGlobeKey(self) }
+        else { delegate?.keyMonitor(self, fnAction: action) }
+    }
 
     func start() -> Bool {
         // Engine's `MainActor.assumeIsolated` callback dispatch is only safe
@@ -66,6 +69,7 @@ final class KeyMonitor {
     }
 
     func stop() {
+        fnTimer?.cancel(); deliver(fnGesture.reset())
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             // CFRunLoopRemoveSource alone leaks the underlying Mach port.
@@ -89,6 +93,7 @@ final class KeyMonitor {
         }
         // The system auto-disables the tap if it takes too long.
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            fnTimer?.cancel(); deliver(fnGesture.reset())
             if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
             DebugRecorder.record(.keyMonitor, "tapLost", ["reason": type == .tapDisabledByTimeout ? "timeout" : "userInput"])
             delegate?.keyMonitorDidLoseTap(self)
@@ -100,9 +105,11 @@ final class KeyMonitor {
         }
         guard type == .keyDown else { return Unmanaged.passUnretained(event) }
 
+        let cancelEscape = SpeechController.shared.isActive && event.getIntegerValueField(.keyboardEventKeycode) == 53
         // A real keypress during an fn hold means it wasn't a lone Globe tap.
-        if fnDownTimestamp != nil { fnTapInterrupted = true }
+        fnTimer?.cancel(); deliver(fnGesture.interrupt())
 
+        if cancelEscape { SpeechController.shared.cancel(); return nil }
         let input = translate(event: event)
         guard let input else { return Unmanaged.passUnretained(event) }
 
@@ -113,19 +120,24 @@ final class KeyMonitor {
     private func handleFlagsChanged(_ event: CGEvent) {
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
         guard keyCode == kVK_Function else {
-            // A different modifier toggled mid-press — not a lone Globe tap.
-            if fnDownTimestamp != nil { fnTapInterrupted = true }
-            return
+            fnTimer?.cancel(); deliver(fnGesture.interrupt()); return
         }
+        let now = ProcessInfo.processInfo.systemUptime
         if event.flags.contains(.maskSecondaryFn) {
-            fnDownTimestamp = event.timestamp
-            fnTapInterrupted = false
+            guard fnGesture.state == .idle else { return }
+            let modified = !event.flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty
+            fnGesture.press(at: now, modified: modified)
+            let timer = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.deliver(self.fnGesture.advance(at: ProcessInfo.processInfo.systemUptime))
+                }
+            }
+            fnTimer = timer
+            DispatchQueue.main.asyncAfter(deadline: .now() + FnGesture.delay, execute: timer)
         } else {
-            defer { fnDownTimestamp = nil }
-            guard let down = fnDownTimestamp, !fnTapInterrupted,
-                  event.timestamp >= down,
-                  event.timestamp - down < Self.globeTapMaxDuration else { return }
-            delegate?.keyMonitorDidTapGlobeKey(self)
+            fnTimer?.cancel(); fnTimer = nil
+            deliver(fnGesture.release(at: now))
         }
     }
 

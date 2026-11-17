@@ -173,7 +173,7 @@ struct QuickAccessSection: View {
 /// Globe key is also toggleable on its own. State is driven by the persisted
 /// flags and the authoritative shortcut handed to each handler — never re-read
 /// from `getShortcut`, which (in dev) reflects the release-app fallback.
-private struct EmojiBrowserHotkeyRow: View {
+struct EmojiBrowserHotkeyRow: View {
     @State private var replacesPanel = SystemEmojiPickerReplacer.shared.replacesPanel
     @State private var atDefault = KeyboardShortcuts.getShortcut(for: .showEmojiBrowser)
         == SystemEmojiPickerReplacer.defaultShortcut
@@ -208,7 +208,7 @@ private struct EmojiBrowserHotkeyRow: View {
 
             Toggle(isOn: Binding(get: { globeOn }, set: setGlobe)) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Press \(Image(systemName: "globe")) key to open Mojito")
+                    Text("Press \(Image(systemName: "globe")) key: tap emoji, hold speech")
                     if globeOn && needsLogout {
                         Text("Log out and back in to finish handing the \(Image(systemName: "globe")) key to Mojito.")
                             .font(.callout)

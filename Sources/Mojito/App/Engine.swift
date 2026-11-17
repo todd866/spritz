@@ -478,6 +478,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     func stop() {
+        SpeechController.shared.cancel()
         monitor.stop()
         pickerWindow.hide()
         // Clear results too — stale rows would otherwise make `topResult`
@@ -560,6 +561,8 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     nonisolated func keyMonitorDidLoseTap(_ monitor: KeyMonitor) {
         MainActor.assumeIsolated {
             self.cancelCapture()
+            SpeechController.shared.cancel()
+            LocalTelemetry.shared.record(.tapLost)
             // Tap may have died because the user revoked Input Monitoring —
             // let the coordinator resume polling and surface the UI state.
             self.permissions?.handleInputMonitoringLost()
@@ -569,11 +572,64 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     nonisolated func keyMonitorDidTapGlobeKey(_ monitor: KeyMonitor) {
         MainActor.assumeIsolated {
             guard SystemEmojiPickerReplacer.shared.globeOpensBrowser else { return }
+            SpeechController.shared.cancel()
+            LocalTelemetry.shared.record(.fnTap)
             self.toggleBrowser()
         }
     }
 
+    nonisolated func keyMonitor(_ monitor: KeyMonitor, fnAction: FnGesture.Action) {
+        MainActor.assumeIsolated {
+            let speech = SpeechController.shared
+            switch fnAction {
+            case .start:
+                guard SystemEmojiPickerReplacer.shared.globeOpensBrowser, self.isActive else { return }
+                speech.cancel()
+                LocalTelemetry.shared.record(.fnHold)
+                self.cancelCapture()
+                let cache = FocusedElementCache.shared
+                guard cache.haveFieldInfo, !cache.focusedIsSecure, cache.focusedIsEditable,
+                      let element = cache.element,
+                      let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
+                    speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected); return
+                }
+                let generation = cache.bridgeFocusGeneration
+                speech.targetIsValid = { [weak self] in
+                    self?.isActive == true && cache.bridgeFocusGeneration == generation &&
+                    cache.haveFieldInfo && !cache.focusedIsSecure && cache.focusedIsEditable &&
+                    NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+                }
+                speech.onTranscript = { [weak self] text in
+                    guard self?.isActive == true, cache.bridgeFocusGeneration == generation,
+                          cache.haveFieldInfo, !cache.focusedIsSecure, cache.focusedIsEditable,
+                          NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                          let current = cache.element, CFEqual(current, element) else {
+                        speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected); return
+                    }
+                    let app = AXUIElementCreateApplication(pid)
+                    AXUIElementSetMessagingTimeout(app, 0.005)
+                    var actual: CFTypeRef?
+                    guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &actual) == .success,
+                          let actual, CFGetTypeID(actual) == AXUIElementGetTypeID(), CFEqual(actual, element) else {
+                        speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected); return
+                    }
+                    TextInserter.replace(charactersToDelete: 0, with: text)
+                    LocalTelemetry.shared.record(.speechInsertion)
+                }
+                speech.start()
+            case .finish: speech.finish()
+            case .cancel:
+                LocalTelemetry.shared.record(.fnCancelled); speech.cancel()
+            case .tap: break
+            }
+        }
+    }
+
     private func process(input: TriggerInput) -> Bool {
+        if SpeechController.shared.isActive {
+            SpeechController.shared.cancel()
+            if case .escape = input { return true }
+        }
         inputSeq &+= 1
         if case .nameChar(let c) = input, c.isNumber { lastDigitSeq = inputSeq }
         // BSOD-style "press any key" effects pre-empt everything; the key is

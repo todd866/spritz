@@ -166,6 +166,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        SpeechController.shared.cancel()
+        LocalTelemetry.shared.flush()
         os_log("applicationWillTerminate", log: log, type: .info)
         // Best-effort send of this session's tail. The async POST may not
         // finish before the process exits, but the timer/day-change/wake

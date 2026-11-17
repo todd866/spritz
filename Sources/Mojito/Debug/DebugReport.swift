@@ -56,6 +56,7 @@ enum DebugReport {
         out += "\n"
         out += nowSection()
         out += "\n"
+        out += "## Local telemetry\nRead the complete daily history using Spritz → Copy local telemetry.\n\n"
         out += footer(now: now)
 
         if out.utf8.count > maxSizeBytes {
