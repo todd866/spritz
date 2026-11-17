@@ -601,42 +601,56 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
                       let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
                     speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected); LocalTelemetry.shared.record(.speechFocusChanged); return
                 }
+                let cachedElement = element
                 let generation = cache.bridgeFocusGeneration
-                speech.targetIsValid = { [weak self] in
-                    self?.isActive == true && cache.bridgeFocusGeneration == generation &&
-                    cache.haveFieldInfo && !cache.focusedIsSecure && cache.focusedIsEditable &&
-                    NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
-                }
-                speech.onTranscript = { [weak self] text in
-                    guard self?.isActive == true, cache.bridgeFocusGeneration == generation,
-                          cache.haveFieldInfo, !cache.focusedIsSecure, cache.focusedIsEditable,
-                          NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-                          let current = cache.element, CFEqual(current, element) else {
-                        speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected); LocalTelemetry.shared.record(.speechFocusChanged); return
-                    }
-                    SpeechFocusValidator.validate(expected: element, pid: pid) { [weak self] outcome in
-                        MainActor.assumeIsolated {
-                            guard let self, self.speechDeliveryGeneration == delivery, self.isActive,
-                                  cache.bridgeFocusGeneration == generation, cache.haveFieldInfo,
-                                  !cache.focusedIsSecure, cache.focusedIsEditable,
-                                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-                                  let current = cache.element, CFEqual(current, element) else {
-                                speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected)
-                                LocalTelemetry.shared.record(.speechFocusChanged); return
-                            }
-                            guard outcome == .match else {
-                                speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected)
-                                LocalTelemetry.shared.record(outcome == .lookupFailed ? .speechFocusLookupFailed : .speechFocusMismatch)
-                                return
-                            }
-                            TextInserter.replace(charactersToDelete: 0, with: text)
-                            LocalTelemetry.shared.record(.speechInsertion)
-                            DictationAlternatives.shared.begin(text: text, element: element, pid: pid)
+                SpeechFocusValidator.capture(pid: pid) { [weak self] captured in
+                    MainActor.assumeIsolated {
+                        guard let self, self.speechDeliveryGeneration == delivery, self.isActive,
+                              cache.bridgeFocusGeneration == generation,
+                              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
+                        guard let element = captured else {
+                            speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected)
+                            LocalTelemetry.shared.record(.speechFocusLookupFailed); return
                         }
+                        speech.targetIsValid = { [weak self] in
+                            self?.isActive == true && cache.bridgeFocusGeneration == generation &&
+                            cache.haveFieldInfo && !cache.focusedIsSecure && cache.focusedIsEditable &&
+                            NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+                        }
+                        speech.onTranscript = { [weak self] text in
+                            guard self?.isActive == true, cache.bridgeFocusGeneration == generation,
+                                  cache.haveFieldInfo, !cache.focusedIsSecure, cache.focusedIsEditable,
+                                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                                  let current = cache.element, CFEqual(current, cachedElement) else {
+                                speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected); LocalTelemetry.shared.record(.speechFocusChanged); return
+                            }
+                            SpeechFocusValidator.validate(expected: element, pid: pid) { [weak self] outcome in
+                                MainActor.assumeIsolated {
+                                    guard let self, self.speechDeliveryGeneration == delivery, self.isActive,
+                                          cache.bridgeFocusGeneration == generation, cache.haveFieldInfo,
+                                          !cache.focusedIsSecure, cache.focusedIsEditable,
+                                          NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                                          let current = cache.element, CFEqual(current, cachedElement) else {
+                                        speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected)
+                                        LocalTelemetry.shared.record(.speechFocusChanged); return
+                                    }
+                                    guard outcome == .match else {
+                                        speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected)
+                                        LocalTelemetry.shared.record(outcome == .lookupFailed ? .speechFocusLookupFailed : .speechFocusMismatch)
+                                        return
+                                    }
+                                    TextInserter.replace(charactersToDelete: 0, with: text)
+                                    LocalTelemetry.shared.record(.speechInsertion)
+                                    DictationAlternatives.shared.begin(text: text, element: element, pid: pid)
+                                }
+                            }
+                        }
+                        speech.start()
                     }
                 }
-                speech.start()
-            case .finish: speech.finish()
+            case .finish:
+                if speech.isActive { speech.finish() }
+                else { self.speechDeliveryGeneration &+= 1 } // Released before the field snapshot completed.
             case .cancel:
                 self.speechDeliveryGeneration &+= 1
                 LocalTelemetry.shared.record(.fnCancelled); speech.cancel()

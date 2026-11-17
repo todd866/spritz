@@ -20,13 +20,11 @@ enum DictationFieldReader {
     private static let queue = DispatchQueue(label: "Spritz.dictationReceipt", qos: .userInitiated)
     static func read(element: AXUIElement, pid: pid_t, completion: @escaping (String?, NSRange?) -> Void) {
         queue.async {
-            let app = AXUIElementCreateApplication(pid)
-            AXUIElementSetMessagingTimeout(app, 0.1)
             AXUIElementSetMessagingTimeout(element, 0.1)
-            var focus: CFTypeRef?, value: CFTypeRef?, range: CFTypeRef?
+            let focus = SpeechFocusValidator.focusedElement(pid: pid)
+            var value: CFTypeRef?, range: CFTypeRef?
             var selection = CFRange()
-            let valid = AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focus) == .success
-                && focus.map { CFEqual($0, element) } == true
+            let valid = focus.map { CFEqual($0, element) } == true
                 && AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success
                 && AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &range) == .success
             var result: NSRange?

@@ -22,6 +22,7 @@ final class DictationAlternatives: ObservableObject {
     private var panel: NSPanel?
     private var element: AXUIElement?
     private var pid: pid_t?
+    private var focusGeneration = 0
     private var receipt: DictationReceipt?
     private var currentText = ""
     private var session = UUID()
@@ -50,6 +51,7 @@ final class DictationAlternatives: ObservableObject {
     func begin(text: String, element: AXUIElement, pid: pid_t) {
         clear()
         guard provider != .off else { return }
+        focusGeneration = FocusedElementCache.shared.bridgeFocusGeneration
         self.element = element; self.pid = pid; choices = [text]; currentText = text
         selected = 0; copyOnly = false
         captureReceipt()
@@ -79,10 +81,10 @@ final class DictationAlternatives: ObservableObject {
     }
     private func targetMatches() -> Bool {
         let cache = FocusedElementCache.shared
-        guard let element, let pid, cache.haveFieldInfo, cache.focusedIsEditable, !cache.focusedIsSecure,
+        guard element != nil, let pid, cache.haveFieldInfo, cache.focusedIsEditable, !cache.focusedIsSecure,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-              let current = cache.element else { return false }
-        return CFEqual(current, element)
+              cache.bridgeFocusGeneration == focusGeneration else { return false }
+        return true
     }
     private func captureReceipt() {
         let id = session, version = revision
