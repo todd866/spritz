@@ -7,11 +7,14 @@ struct PickerView: View {
         // Chrome lives on the panel (NSGlassEffectView / NSVisualEffectView)
         // so it matches the system popover / menu chrome.
         if viewModel.expanded, let browser = viewModel.browser {
+            VStack(spacing: 0) {
             InlineBrowserView(
                 browser: browser,
                 onPick: { viewModel.onBrowserPick?($0) },
                 onCategory: { viewModel.onBrowserCategory?($0) }
             )
+            DictationSwapStrip(model: .shared)
+            }.frame(width: BrowserLayout.width)
         } else if viewModel.compact {
             compactBar
         } else {

@@ -1,1 +1,1 @@
-{"type":"object","properties":{"cleaned":{"type":"string"},"clearer":{"type":"string"}},"required":["cleaned","clearer"],"additionalProperties":false}
+{"type":"object","properties":{"cleaned":{"type":"string"},"clearer":{"type":"string"},"notes":{"type":"string"}},"required":["cleaned","clearer","notes"],"additionalProperties":false}

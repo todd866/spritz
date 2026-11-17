@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		00F9E0F2F03790F2AAF4E11B /* FnGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1657AAFE67CF1A98C7CE4A93 /* FnGesture.swift */; };
 		01491C879FFA29F7F655A6E3 /* FavoritesBrowseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BC327DAE8D5D1A43640CF2 /* FavoritesBrowseTests.swift */; };
+		025A6F622EEB3B4A86BF4D5A /* NativeDictationCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E46281A92DB98FF4F1D991D /* NativeDictationCapture.swift */; };
 		045C88162109AEE5051E4ED8 /* AudioPlayerPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2BBEBE4D5EEC00D826E8D8C /* AudioPlayerPool.swift */; };
 		06082A2DD9E20456D2D20F2C /* ExclusionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 625433055302CF9B9053F885 /* ExclusionStoreTests.swift */; };
 		06E493068FD409A2B795BC56 /* s01.bin in Resources */ = {isa = PBXBuildFile; fileRef = DF0A9FF25BC996BC640A35A0 /* s01.bin */; };
@@ -295,6 +296,7 @@
 		6B6C46B06E159E4845158C0E /* LocalTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalTelemetry.swift; sourceTree = "<group>"; };
 		6C69999E4AC7F8B8C054B395 /* DebugReportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugReportTests.swift; sourceTree = "<group>"; };
 		6E2009C3B36DF9228B873244 /* EmoticonTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmoticonTable.swift; sourceTree = "<group>"; };
+		6E46281A92DB98FF4F1D991D /* NativeDictationCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDictationCapture.swift; sourceTree = "<group>"; };
 		6EE7D78A4736AA53650D60DC /* AmbientEmoticonTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmbientEmoticonTable.swift; sourceTree = "<group>"; };
 		6EE88D54CC3B8F3272DF2A50 /* SpeechFocusValidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechFocusValidatorTests.swift; sourceTree = "<group>"; };
 		6F4345DE634CD2EB2FE71120 /* AliasStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AliasStore.swift; sourceTree = "<group>"; };
@@ -692,6 +694,7 @@
 				52DF280ABF42475053B4EB56 /* MatrixRain.swift */,
 				186ED6EF6F678E8C3F082FD8 /* MoofSound.swift */,
 				D2C4C16E01184684E33C3437 /* MyLegSound.swift */,
+				6E46281A92DB98FF4F1D991D /* NativeDictationCapture.swift */,
 				E9F53545C34DF695F1B03CB2 /* ParticlePanel.swift */,
 				8792D3A9CA964FE06B29F30F /* PrideWave.swift */,
 				4E05E40C5820FFA122C04848 /* RefinementRunner.swift */,
@@ -1069,6 +1072,7 @@
 				0874B00B5CC5119E985724C3 /* MenuBarController.swift in Sources */,
 				E4A22D4B3F3A0A818AEAA21E /* MoofSound.swift in Sources */,
 				A9A15B339C05195BB45CC09F /* MyLegSound.swift in Sources */,
+				025A6F622EEB3B4A86BF4D5A /* NativeDictationCapture.swift in Sources */,
 				8EE9F3A928A7AFDB16C6D9A2 /* OnboardingRoot.swift in Sources */,
 				ADC91CB08A1B9AE8F767488D /* OnboardingScreens.swift in Sources */,
 				30C268985E8FC43E95617345 /* OnboardingWindowController.swift in Sources */,
@@ -1286,7 +1290,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "$(APP_ICON_NAME)";
 				CODE_SIGN_ENTITLEMENTS = Resources/Mojito.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -1295,7 +1299,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.todd866.Spritz;
 				PRODUCT_MODULE_NAME = Mojito;
 				PRODUCT_NAME = Spritz;
@@ -1381,7 +1385,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "$(APP_ICON_NAME)";
 				CODE_SIGN_ENTITLEMENTS = Resources/Mojito.dev.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -1390,7 +1394,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.todd866.Spritz.dev;
 				PRODUCT_MODULE_NAME = Mojito;
 				PRODUCT_NAME = "Spritz Dev";

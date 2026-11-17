@@ -77,3 +77,52 @@ struct DictationCycleTests {
         #expect(gesture.release(at: 0.1) == nil)
     }
 }
+
+struct DictatedInsertionTests {
+    @Test func extractsOnlyInsertedPassageAndPreservesSurroundingText() {
+        #expect(DictatedInsertion.extract(before: "Before. After.", selection: NSRange(location: 8, length: 0), after: "Before. New words. After.", caret: NSRange(location: 19, length: 0)) == "New words. ")
+        #expect(DictatedInsertion.extract(before: "old", selection: NSRange(location: 0, length: 3), after: "👩🏽‍💻", caret: NSRange(location: 7, length: 0)) == "👩🏽‍💻")
+        #expect(DictatedInsertion.extract(before: "before", selection: NSRange(location: 6, length: 0), after: "different text", caret: NSRange(location: 14, length: 0)) == nil)
+        #expect(DictatedInsertion.extract(before: "", selection: NSRange(location: 0, length: 0), after: "Hello", caret: NSRange(location: 2, length: 0)) == nil)
+        #expect(DictatedInsertion.extract(before: "", selection: NSRange(location: Int.max, length: 1), after: "Hello", caret: NSRange(location: 5, length: 0)) == nil)
+    }
+}
+
+@MainActor
+struct CombinedPickerTests {
+    @Test func tabCyclesTextWhileOtherKeysRemainWithEmoji() {
+        let model = DictationAlternatives(preview: true)
+        model.choices = ["Apple text", "GPT text", "Reviewed text"]
+        model.labels = ["Apple", "GPT", "Reviewed"]
+        model.copyOnly = false
+        model.showEmbedded()
+        #expect(model.handle(.tabKey(shift: false)))
+        #expect(model.selected == 1)
+        #expect(model.embedded)
+        #expect(model.textPreviewActive)
+        #expect(model.handle(.tabKey(shift: true)))
+        #expect(model.selected == 0)
+        #expect(model.handle(.tabKey(shift: true)))
+        #expect(model.selected == 2)
+        #expect(model.handle(.returnKey(shift: false)))
+        #expect(model.copyOnly) // No receipt: Enter is handled safely without insertion.
+        #expect(!model.handle(.nameChar("a")))
+        #expect(!model.handle(.returnKey(shift: false)))
+        model.clear()
+    }
+    @Test func escapeDiscardsPreviewAndClosesBrowser() {
+        let model = DictationAlternatives(preview: true)
+        model.choices = ["Original", "Reviewed"]
+        model.showEmbedded()
+        var browser = TriggerStateMachine()
+        browser.enterBrowsing(query: "")
+        #expect(model.handle(.tabKey(shift: false)))
+        #expect(!model.handle(.escape))
+        let result = browser.handle(.escape)
+        #expect(result.consumesKey)
+        #expect(result.action == .closeBrowser)
+        model.hide()
+        #expect(!model.embedded)
+        #expect(model.choices == ["Original", "Reviewed"])
+    }
+}

@@ -299,6 +299,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     private func handleFocusChanged() {
+        NativeDictationCapture.shared.cancel()
         DictationAlternatives.shared.clear()
         invalidateContextSuggestions()
         pendingEmoticonUndo = nil
@@ -480,6 +481,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     func stop() {
+        NativeDictationCapture.shared.cancel()
         DictationAlternatives.shared.clear()
         speechDeliveryGeneration &+= 1
         SpeechController.shared.cancel()
@@ -576,10 +578,13 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     nonisolated func keyMonitorDidTapGlobeKey(_ monitor: KeyMonitor) {
         MainActor.assumeIsolated {
             guard SystemEmojiPickerReplacer.shared.globeOpensBrowser else { return }
-            self.speechDeliveryGeneration &+= 1
-            SpeechController.shared.cancel()
+            let collectingApple = SpeechInputProvider.current == .layered && SpeechController.shared.isActive && !SpeechController.shared.isListening
+            if !collectingApple {
+                self.speechDeliveryGeneration &+= 1
+                SpeechController.shared.cancel()
+            }
             LocalTelemetry.shared.record(.fnTap)
-            if !DictationAlternatives.shared.toggle(emoji: { [weak self] in self?.toggleBrowser() }) { self.toggleBrowser() }
+            self.toggleBrowser()
         }
     }
 
@@ -587,7 +592,8 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         MainActor.assumeIsolated {
             self.speechDeliveryGeneration &+= 1
             SpeechController.shared.cancel()
-            return DictationAlternatives.shared.cycle(backward: cycleSpeechBackward, emoji: { [weak self] in self?.toggleBrowser() })
+            if !DictationAlternatives.shared.embedded { self.showBrowser() }
+            return DictationAlternatives.shared.handle(.tabKey(shift: cycleSpeechBackward))
         }
     }
 
@@ -598,15 +604,20 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             case .start:
                 guard SystemEmojiPickerReplacer.shared.globeOpensBrowser, self.isActive else { return }
                 LocalTelemetry.shared.record(.fnHold)
-                guard SpeechInputProvider.current == .apple else {
+                let speechInput = SpeechInputProvider.current
+                if speechInput != .apple {
+                    DictationAlternatives.shared.prepareNative()
+                    NativeDictationCapture.shared.start()
+                }
+                guard speechInput != .chatgpt else {
                     // Fn flags pass through unchanged. ChatGPT owns its native
                     // hold shortcut and inserts its own actual-audio transcript.
-                    speech.cancel(); DictationAlternatives.shared.clear(); return
+                    speech.cancel(); return
                 }
                 self.speechDeliveryGeneration &+= 1
                 // Preserve the last result while Fn is down: Tab may turn this
                 // into a cycle chord. A completed new transcript replaces it.
-                DictationAlternatives.shared.hide()
+                if speechInput == .apple { DictationAlternatives.shared.hide() }
                 let delivery = self.speechDeliveryGeneration
                 speech.cancel()
                 self.cancelCapture()
@@ -633,6 +644,11 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
                             NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
                         }
                         speech.onTranscript = { [weak self] text in
+                            if speechInput == .layered {
+                                guard self?.speechDeliveryGeneration == delivery else { return }
+                                DictationAlternatives.shared.receiveApple(text)
+                                return
+                            }
                             guard self?.isActive == true, cache.bridgeFocusGeneration == generation,
                                   cache.haveFieldInfo, !cache.focusedIsSecure, cache.focusedIsEditable,
                                   NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
@@ -664,9 +680,11 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
                     }
                 }
             case .finish:
+                if SpeechInputProvider.current != .apple { NativeDictationCapture.shared.finish() }
                 if speech.isActive { speech.finish() }
                 else { self.speechDeliveryGeneration &+= 1 } // Released before the field snapshot completed.
             case .cancel:
+                NativeDictationCapture.shared.cancel()
                 self.speechDeliveryGeneration &+= 1
                 LocalTelemetry.shared.record(.fnCancelled); speech.cancel()
             case .tap: break
@@ -676,6 +694,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
 
     private func process(input: TriggerInput) -> Bool {
         if DictationAlternatives.shared.handle(input) { return true }
+        NativeDictationCapture.shared.cancel()
         speechDeliveryGeneration &+= 1
         if SpeechController.shared.isActive {
             SpeechController.shared.cancel()
@@ -1277,6 +1296,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         let contextText = consumeContextSuggestions()
         let browser = EmojiBrowserViewModel(database: database, quickAccess: quickAccess, contextText: contextText)
         viewModel.browser = browser
+        DictationAlternatives.shared.showEmbedded()
         persistNumberedSuggestions(browser.quickSuggestions)
         if UserDefaults.standard.dictionary(forKey: EmojiBrowserViewModel.letterBindingsKey) as? [String: String] != browser.letterBindings {
             UserDefaults.standard.set(browser.letterBindings, forKey: EmojiBrowserViewModel.letterBindingsKey)

@@ -94,7 +94,7 @@ struct PrivacyDetailsRows: View {
         privacyRow(
             icon: "eye.slash",
             title: "Local emoji history",
-            detail: "Apple speech audio, emoji history and 90-day usage counts stay on this Mac. ChatGPT Dictate handles audio through ChatGPT itself. Optional Apple-text alternatives send the transcript to your selected AI subscription. Spritz keeps those transcripts in memory for up to two minutes. Provider policies apply. GIF searches go to KLIPY."
+            detail: "Apple speech audio, emoji history and 90-day usage counts stay on this Mac. ChatGPT Dictate handles audio through ChatGPT itself. Optional text review sends the captured dictation to your selected AI subscription. Analyse text sends the current draft only when you click it. Spritz keeps those transcripts in memory for up to two minutes. Provider policies apply. GIF searches go to KLIPY."
         )
         privacyRow(
             icon: "dollarsign.circle",

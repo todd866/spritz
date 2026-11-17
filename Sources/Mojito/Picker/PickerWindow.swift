@@ -223,7 +223,7 @@ final class PickerWindow {
         // own clicks via AppKit's hit-testing.
         panel.isMovableByWindowBackground = true
         setCornerRadius(BrowserLayout.cornerRadius)
-        let size = CGSize(width: BrowserLayout.width, height: BrowserLayout.height)
+        let size = CGSize(width: BrowserLayout.width, height: BrowserLayout.height + 180)
 
         if panel.isVisible {
             let current = panel.frame
@@ -255,6 +255,7 @@ final class PickerWindow {
     }
 
     func hide() {
+        DictationAlternatives.shared.hide()
         panel.orderOut(nil)
         viewModel.isVisible = false
         removeClickMonitors()

@@ -57,7 +57,7 @@ struct GeneralSettingsView: View {
                     SpeechController.shared.cancel()
                     DictationAlternatives.shared.clear()
                 }
-                if speechInput == .apple {
+                Group {
                     Picker("Speech alternatives", selection: $alternatives.provider) {
                         ForEach(RefinementProvider.allCases) { Text($0.rawValue).tag($0) }
                     }

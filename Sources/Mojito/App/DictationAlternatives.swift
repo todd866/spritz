@@ -5,8 +5,17 @@ import SwiftUI
 @MainActor
 final class DictationAlternatives: ObservableObject {
     static let shared = DictationAlternatives()
+    @Published var embedded = false
     @Published var choices: [String] = []
+    @Published var labels: [String] = ["Original", "Corrected", "Clearer"]
+    @Published var reviewNotes = ""
+    private var appleTranscript: String?
+    private var sourceChoices: [String] = []
+    private var sourceLabels: [String] = []
+    private var sourceText = ""
+    private var nativeSource = false
     @Published var selected = 0
+    @Published var textPreviewActive = false
     @Published var status = ""
     @Published var busy = false
     @Published var copyOnly = false
@@ -44,17 +53,25 @@ final class DictationAlternatives: ObservableObject {
         }
     }
     func clear() {
+        let preserveEmbedded = embedded
         if busy { LocalTelemetry.shared.record(.refinementCancel) }
         session = UUID(); revision &+= 1; runner.cancel(); expiry?.cancel(); expiry = nil
-        applying = false
-        hide(); choices = []; receipt = nil; element = nil; pid = nil; currentText = ""; busy = false; status = ""
+        applying = false; textPreviewActive = false
+        hide(); embedded = preserveEmbedded; visible = preserveEmbedded; appleTranscript = nil; choices = []; sourceChoices = []; sourceLabels = []; sourceText = ""; reviewNotes = ""; receipt = nil; element = nil; pid = nil; currentText = ""; busy = false; status = ""
     }
-    func begin(text: String, element: AXUIElement, pid: pid_t) {
+    func prepareNative() { clear(); appleTranscript = nil; status = "Waiting for dictation" }
+    func receiveApple(_ text: String) { NativeDictationCapture.shared.receiveApple(text) }
+    func begin(text: String, element: AXUIElement, pid: pid_t, native: Bool = false, apple: String? = nil) {
+        let wasEmbedded = embedded
         clear()
-        guard provider != .off else { return }
+        embedded = wasEmbedded; visible = wasEmbedded
+        appleTranscript = apple
         focusGeneration = FocusedElementCache.shared.bridgeFocusGeneration
-        self.element = element; self.pid = pid; choices = [text]; currentText = text
-        selected = 0; appliedIndex = 0; copyOnly = false
+        self.element = element; self.pid = pid; currentText = text; sourceText = text; nativeSource = native
+        sourceChoices = native ? (appleTranscript.map { [$0, text] } ?? [text]) : [text]
+        sourceLabels = native ? (appleTranscript == nil ? ["GPT"] : ["Apple", "GPT"]) : ["Apple"]
+        choices = sourceChoices; labels = sourceLabels
+        selected = sourceChoices.count - 1; appliedIndex = selected; copyOnly = false
         captureReceipt()
         refine()
         let id = session
@@ -63,17 +80,37 @@ final class DictationAlternatives: ObservableObject {
             if !Task.isCancelled, self.session == id { self.clear() }
         }
     }
+    func analyseFocusedText() {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return }
+        let id = session
+        SpeechFocusValidator.capture(pid: pid) { [weak self] element in
+            MainActor.assumeIsolated {
+                guard let self, self.session == id, let element else { return }
+                DictationFieldReader.read(element: element, pid: pid) { [weak self] value, range in
+                    MainActor.assumeIsolated {
+                        guard let self, self.session == id, self.embedded, let value, !value.isEmpty, value.utf8.count <= 24_000 else { return }
+                        self.begin(text: value, element: element, pid: pid, native: SpeechInputProvider.current != .apple)
+                    }
+                }
+            }
+        }
+    }
+
     func refine() {
-        guard let original = choices.first, provider != .off else { return }
-        choices = [original]; selected = 0; busy = true; status = ""
+        guard !sourceText.isEmpty, provider != .off else { return }
+        let original = sourceText
+        choices = sourceChoices; labels = sourceLabels
+        selected = min(appliedIndex, max(0, choices.count - 1)); busy = true; status = ""; reviewNotes = ""
         let id = session, started = Date()
         LocalTelemetry.shared.record(.refinementStart)
-        runner.run(original, provider: provider) { [weak self] result in
+        runner.run(original, provider: provider, reference: nativeSource ? appleTranscript : nil) { [weak self] result in
             guard let self, self.session == id else { return }
             self.busy = false
             if let result {
                 // Keep the labels stable, including when a model considers the original already good.
-                self.choices = [original, result.cleaned, result.clearer]
+                self.choices = self.sourceChoices + (self.nativeSource ? [result.cleaned] : [result.cleaned, result.clearer])
+                self.labels = self.sourceLabels + (self.nativeSource ? ["Reviewed"] : ["Corrected", "Clearer"])
+                self.reviewNotes = result.notes ?? ""
                 LocalTelemetry.shared.record(.refinementReady, durationMilliseconds: Date().timeIntervalSince(started) * 1000)
             } else {
                 self.status = "Unavailable"; LocalTelemetry.shared.record(.refinementFailure)
@@ -144,10 +181,28 @@ final class DictationAlternatives: ObservableObject {
     }
 
     func hide() {
+        embedded = false
         panel?.orderOut(nil); visible = false
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }; clickMonitor = nil
     }
+    func showEmbedded() { embedded = true; visible = true; textPreviewActive = false }
     func handle(_ input: TriggerInput) -> Bool {
+        if embedded {
+            if case .tabKey(let backward) = input {
+                guard !applying else { return true }
+                if let next = Self.nextIndex(current: selected, count: choices.count, backward: backward) {
+                    selected = next
+                    textPreviewActive = true
+                }
+                return true
+            }
+            if case .returnKey = input, textPreviewActive, !choices.isEmpty {
+                choose(selected, keepOpen: true); return true
+            }
+            // Typing or navigating emojis returns Enter to the emoji browser.
+            textPreviewActive = false
+            return false
+        }
         if case .focusChange = input { clear(); return false }
         if visible {
             switch input {
@@ -168,7 +223,7 @@ final class DictationAlternatives: ObservableObject {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(choices[index], forType: .string)
         LocalTelemetry.shared.record(.refinementCopy); hide()
     }
-    func choose(_ index: Int) {
+    func choose(_ index: Int, keepOpen: Bool = false) {
         guard choices.indices.contains(index), !applying else { return }
         if copyOnly { copy(index); return }
         guard let receipt, targetMatches(), let element, let pid else { copyOnly = true; status = "Copy to use"; return }
@@ -183,7 +238,7 @@ final class DictationAlternatives: ObservableObject {
                     self.copyOnly = true; self.status = "Text changed · copy to use"; return
                 }
                 TextInserter.replace(charactersToDelete: receipt.text.count, with: text)
-                self.revision &+= 1; self.receipt = nil; self.currentText = text; self.appliedIndex = index; self.hide(); self.captureReceipt()
+                self.revision &+= 1; self.receipt = nil; self.currentText = text; self.appliedIndex = index; if !keepOpen { self.hide() }; self.captureReceipt()
                 LocalTelemetry.shared.record(.refinementChosen)
             }
         }
@@ -212,7 +267,7 @@ struct DictationAlternativesView: View {
                     ForEach(Array(model.choices.enumerated()), id: \.offset) { index, text in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                Text(["1 · Original", "2 · Corrected", "3 · Clearer"][index]).font(.system(size: 12, weight: .semibold))
+                                Text("\(index + 1) · \(model.labels.indices.contains(index) ? model.labels[index] : "Option")").font(.system(size: 12, weight: .semibold))
                                 Spacer()
                                 if !model.copyOnly { Button("Copy") { model.copy(index) } }
                                 Button(model.copyOnly ? "Copy" : "Use") { model.choose(index) }
@@ -232,5 +287,43 @@ struct DictationAlternativesView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 13))
+    }
+}
+
+/// Fixed controls with a scrolling full-text preview under the emoji browser.
+struct DictationSwapStrip: View {
+    @ObservedObject var model: DictationAlternatives
+    var body: some View {
+        VStack(spacing: 8) {
+            Divider()
+            HStack(spacing: 8) {
+                if model.choices.isEmpty {
+                    Text("Text alternatives").font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    Button("Analyse text") { model.analyseFocusedText() }
+                } else {
+                    Picker("Text", selection: $model.selected) {
+                        ForEach(Array(model.choices.indices), id: \.self) { index in
+                            Text(model.labels.indices.contains(index) ? model.labels[index] : "Option").tag(index)
+                        }
+                    }.labelsHidden().onChange(of: model.selected) { _, _ in model.textPreviewActive = true }
+                    Text(model.textPreviewActive ? "⇧⇥ / ⇥ · ↵" : "⇧⇥ / ⇥").font(.system(size: 12)).foregroundStyle(.secondary)
+                    if model.busy { ProgressView().controlSize(.small) }
+                    Spacer(minLength: 0)
+                    Button(model.copyOnly ? "Copy" : "Use") { model.choose(model.selected, keepOpen: true) }
+                }
+            }.padding(.horizontal, 10)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(model.choices.indices.contains(model.selected) ? model.choices[model.selected] : "Dictate, then review the complete passage here.")
+                        .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+                    if !model.reviewNotes.isEmpty, model.selected >= model.choices.count - 1 {
+                        Divider()
+                        Text(model.reviewNotes).font(.caption).fixedSize(horizontal: false, vertical: true)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10)
+            }
+            if !model.status.isEmpty { Text(model.status).font(.caption).padding(.horizontal, 10) }
+        }.padding(.bottom, 10).frame(height: 180)
     }
 }

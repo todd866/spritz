@@ -5,7 +5,7 @@ import os
 @MainActor
 final class LocalTelemetry {
     enum Event: String, Codable, CaseIterable {
-        case refinementCycle, refinementCancel, refinementStart, refinementReady, refinementFailure, refinementChosen, refinementCopy
+        case nativeTranscriptCaptured, refinementCycle, refinementCancel, refinementStart, refinementReady, refinementFailure, refinementChosen, refinementCopy
         case fnTap, fnHold, fnCancelled, pickerOpen, pickerCancel, insertionAttempt, tapLost
         case speechStart, speechFinish, speechCancel, speechFailure, speechInsertion, speechFocusRejected, speechPermissionRequired, speechUnavailable, speechFocusChanged, speechFocusLookupFailed, speechFocusMismatch
     }

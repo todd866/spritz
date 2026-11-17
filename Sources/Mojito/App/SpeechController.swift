@@ -6,7 +6,7 @@ import Combine
 /// External mode leaves the physical Fn events to ChatGPT's own configured
 /// global Dictate shortcut. Spritz neither automates that app nor handles audio.
 enum SpeechInputProvider: String, CaseIterable, Identifiable {
-    case apple = "Apple", chatgpt = "ChatGPT Dictate"
+    case apple = "Apple", chatgpt = "ChatGPT Dictate", layered = "Apple + ChatGPT"
     var id: String { rawValue }
     static let preferenceKey = "speechInputProvider"
     static var current: Self {

@@ -58,7 +58,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
         previewDefaults.set(Dictionary(uniqueKeysWithValues: demo.enumerated().map { ($0.element, 100 - $0.offset) }), forKey: PrefsKey.usageCounts)
         previewDefaults.set(demo.reversed().map { $0 }, forKey: PrefsKey.recentEmoji)
         for dark in [false, true] {
-            for scenario in ["mostUsed", "recent", "all", "search", "emptySearch", "largeText", "suggested", "category", "modeReset", "general", "privacy", "fn", "alternatives", "alternativesLong"] {
+            for scenario in ["mostUsed", "recent", "all", "search", "emptySearch", "largeText", "suggested", "category", "modeReset", "general", "privacy", "fn", "alternatives", "alternativesLong", "combined", "combinedLong"] {
                 let browser = EmojiBrowserViewModel(database: .shared, quickAccess: QuickAccessStore(defaults: previewDefaults), defaults: previewDefaults, contextText: scenario == "suggested" ? "happy birthday cake party" : nil)
                 if scenario == "recent" { browser.selectMode(.recent) }
                 if scenario == "all" { browser.selectMode(.all) }
@@ -66,10 +66,13 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
                 if scenario == "emptySearch" { browser.setQuery("zzqxzzqxzzqx") }
                 let alternatives = DictationAlternatives(preview: true)
                 alternatives.choices = ["Can you move the meeting to Thursday at three? I think that works better, but please check with Sam first.", "Can you move the meeting to Thursday at three? I think that works better, but please check with Sam first.", "Can you move the meeting to Thursday at three? I think that works better, but please check with Sam before moving it."]
-                if scenario == "alternativesLong" { alternatives.choices = alternatives.choices.map { String(repeating: $0 + " ", count: 15) } }
+                if scenario == "combined" || scenario == "combinedLong" { alternatives.labels = ["Apple", "GPT", "Reviewed"]; alternatives.selected = 1 }
+                if scenario == "alternativesLong" || scenario == "combinedLong" { alternatives.choices = alternatives.choices.map { String(repeating: $0 + " ", count: 15) } }
                 let content = InlineBrowserView(browser: browser, onPick: { _ in }, onCategory: { browser.selectCategory($0) })
                 let view = VStack(spacing: 0) {
-                    if scenario.hasPrefix("alternatives") {
+                    if scenario.hasPrefix("combined") {
+                        VStack(spacing: 0) { content; DictationSwapStrip(model: alternatives) }.frame(width: BrowserLayout.width)
+                    } else if scenario.hasPrefix("alternatives") {
                         DictationAlternativesView(model: alternatives)
                     } else if scenario == "fn" {
                         Form { EmojiBrowserHotkeyRow() }.formStyle(.grouped)
@@ -85,7 +88,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
                     .environment(\.sizeCategory, scenario == "largeText" ? .accessibilityExtraExtraExtraLarge : .large)
                     .background(dark ? Color(red: 0.13, green: 0.13, blue: 0.14) : Color(red: 0.96, green: 0.96, blue: 0.97))
                 let hosting = NSHostingView(rootView: view)
-                let size = scenario.hasPrefix("alternatives") ? NSSize(width: 520, height: 420) : scenario == "fn" ? NSSize(width: 650, height: 240) : ["general", "privacy"].contains(scenario) ? NSSize(width: 650, height: 700) : NSSize(width: BrowserLayout.width, height: BrowserLayout.height)
+                let size = scenario.hasPrefix("combined") ? NSSize(width: BrowserLayout.width, height: BrowserLayout.height + 180) : scenario.hasPrefix("alternatives") ? NSSize(width: 520, height: 420) : scenario == "fn" ? NSSize(width: 650, height: 240) : ["general", "privacy"].contains(scenario) ? NSSize(width: 650, height: 700) : NSSize(width: BrowserLayout.width, height: BrowserLayout.height)
                 let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
                 window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 window.contentView = hosting

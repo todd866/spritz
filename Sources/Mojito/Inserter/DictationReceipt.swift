@@ -24,7 +24,9 @@ enum DictationFieldReader {
             let focus = SpeechFocusValidator.focusedElement(pid: pid)
             var value: CFTypeRef?, range: CFTypeRef?
             var selection = CFRange()
-            let valid = focus.map { CFEqual($0, element) } == true
+            let info = AppContextDetector.classify(element)
+            let eligible = !info.secure && info.editable && TouchBarRequestPolicy.isTextRole(info.role)
+            let valid = eligible && focus.map { CFEqual($0, element) } == true
                 && AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success
                 && AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &range) == .success
             var result: NSRange?
