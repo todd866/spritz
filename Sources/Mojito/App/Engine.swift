@@ -78,6 +78,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     /// advanced when the handler fires, the user typed past us and we skip the
     /// undo entry.
     private var inputSeq: Int = 0
+    private var speechDeliveryGeneration = 0
     /// `inputSeq` of the most recent digit keystroke. Lets the deferred heart
     /// insert skip itself when a digit lands immediately after (`<30`) before
     /// the conversion (and its undo entry) has even been created.
@@ -478,6 +479,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     func stop() {
+        speechDeliveryGeneration &+= 1
         SpeechController.shared.cancel()
         monitor.stop()
         pickerWindow.hide()
@@ -572,6 +574,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     nonisolated func keyMonitorDidTapGlobeKey(_ monitor: KeyMonitor) {
         MainActor.assumeIsolated {
             guard SystemEmojiPickerReplacer.shared.globeOpensBrowser else { return }
+            self.speechDeliveryGeneration &+= 1
             SpeechController.shared.cancel()
             LocalTelemetry.shared.record(.fnTap)
             self.toggleBrowser()
@@ -584,6 +587,8 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             switch fnAction {
             case .start:
                 guard SystemEmojiPickerReplacer.shared.globeOpensBrowser, self.isActive else { return }
+                self.speechDeliveryGeneration &+= 1
+                let delivery = self.speechDeliveryGeneration
                 speech.cancel()
                 LocalTelemetry.shared.record(.fnHold)
                 self.cancelCapture()
@@ -591,7 +596,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
                 guard cache.haveFieldInfo, !cache.focusedIsSecure, cache.focusedIsEditable,
                       let element = cache.element,
                       let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
-                    speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected); return
+                    speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected); LocalTelemetry.shared.record(.speechFocusChanged); return
                 }
                 let generation = cache.bridgeFocusGeneration
                 speech.targetIsValid = { [weak self] in
@@ -604,21 +609,32 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
                           cache.haveFieldInfo, !cache.focusedIsSecure, cache.focusedIsEditable,
                           NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
                           let current = cache.element, CFEqual(current, element) else {
-                        speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected); return
+                        speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected); LocalTelemetry.shared.record(.speechFocusChanged); return
                     }
-                    let app = AXUIElementCreateApplication(pid)
-                    AXUIElementSetMessagingTimeout(app, 0.005)
-                    var actual: CFTypeRef?
-                    guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &actual) == .success,
-                          let actual, CFGetTypeID(actual) == AXUIElementGetTypeID(), CFEqual(actual, element) else {
-                        speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected); return
+                    SpeechFocusValidator.validate(expected: element, pid: pid) { [weak self] outcome in
+                        MainActor.assumeIsolated {
+                            guard let self, self.speechDeliveryGeneration == delivery, self.isActive,
+                                  cache.bridgeFocusGeneration == generation, cache.haveFieldInfo,
+                                  !cache.focusedIsSecure, cache.focusedIsEditable,
+                                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                                  let current = cache.element, CFEqual(current, element) else {
+                                speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected)
+                                LocalTelemetry.shared.record(.speechFocusChanged); return
+                            }
+                            guard outcome == .match else {
+                                speech.rejectInsertion(); LocalTelemetry.shared.record(.speechFocusRejected)
+                                LocalTelemetry.shared.record(outcome == .lookupFailed ? .speechFocusLookupFailed : .speechFocusMismatch)
+                                return
+                            }
+                            TextInserter.replace(charactersToDelete: 0, with: text)
+                            LocalTelemetry.shared.record(.speechInsertion)
+                        }
                     }
-                    TextInserter.replace(charactersToDelete: 0, with: text)
-                    LocalTelemetry.shared.record(.speechInsertion)
                 }
                 speech.start()
             case .finish: speech.finish()
             case .cancel:
+                self.speechDeliveryGeneration &+= 1
                 LocalTelemetry.shared.record(.fnCancelled); speech.cancel()
             case .tap: break
             }
@@ -626,6 +642,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     private func process(input: TriggerInput) -> Bool {
+        speechDeliveryGeneration &+= 1
         if SpeechController.shared.isActive {
             SpeechController.shared.cancel()
             if case .escape = input { return true }

@@ -18,6 +18,7 @@
 		08B90EAE6DAD0198A743979E /* Emoji in Resources */ = {isa = PBXBuildFile; fileRef = 70F2866D3BE0CC5D08CF9AD1 /* Emoji */; };
 		0A08522DE0E24AED5CEB6688 /* RoundedMask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7046B2F9978D044A9746608B /* RoundedMask.swift */; };
 		0A4AAE2AE35D2C90AB9735B7 /* s02.bin in Resources */ = {isa = PBXBuildFile; fileRef = A3781043056BF9F399D00EDD /* s02.bin */; };
+		0BC9E975804B38323245B826 /* SpeechFocusValidatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EE88D54CC3B8F3272DF2A50 /* SpeechFocusValidatorTests.swift */; };
 		0D48DFE069D4D6C6F2E568B5 /* AnimationTicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 162291D3BD8AF6CD22BE0378 /* AnimationTicker.swift */; };
 		0F5899AC76F676DCA0E3368D /* GifPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02399494F4CF5825B0401CD /* GifPickerView.swift */; };
 		13A5B7C53702606B6868EB50 /* s05.bin in Resources */ = {isa = PBXBuildFile; fileRef = 9C90F0A490BC13D9CC5ADF90 /* s05.bin */; };
@@ -90,6 +91,7 @@
 		75008F5E9E8750E55512283C /* FzyScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5EDBB8F234B21B8D4A3324 /* FzyScorer.swift */; };
 		751B7D80FF9EA3BA8B30B8FC /* EasterEggsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA756B434C9FED6B691D07B8 /* EasterEggsSettings.swift */; };
 		7525CC4DDD1EDE4BE0FADC03 /* s15.bin in Resources */ = {isa = PBXBuildFile; fileRef = ED8647D638A24D3741D78A59 /* s15.bin */; };
+		752775BD3EF19D47E5C4BBD6 /* SpeechFocusValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E52A374C2EDA3D16DC9292B /* SpeechFocusValidator.swift */; };
 		75402AE472D5B43CE11590A9 /* InlineBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161D8677669C3B6B7947ECF /* InlineBrowserView.swift */; };
 		755312D29AEDF631AF9D98C5 /* ExclusionsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD6171603CD5F5CC6ED9A636 /* ExclusionsSettings.swift */; };
 		75BBF0FDC76C3BB733E4C6C8 /* Engine.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED0A255DD094B85EF7DC67D2 /* Engine.swift */; };
@@ -285,6 +287,7 @@
 		6C69999E4AC7F8B8C054B395 /* DebugReportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugReportTests.swift; sourceTree = "<group>"; };
 		6E2009C3B36DF9228B873244 /* EmoticonTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmoticonTable.swift; sourceTree = "<group>"; };
 		6EE7D78A4736AA53650D60DC /* AmbientEmoticonTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmbientEmoticonTable.swift; sourceTree = "<group>"; };
+		6EE88D54CC3B8F3272DF2A50 /* SpeechFocusValidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechFocusValidatorTests.swift; sourceTree = "<group>"; };
 		6F4345DE634CD2EB2FE71120 /* AliasStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AliasStore.swift; sourceTree = "<group>"; };
 		702AC2870CD686AB17CC518E /* UpdaterCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterCoordinator.swift; sourceTree = "<group>"; };
 		7046B2F9978D044A9746608B /* RoundedMask.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundedMask.swift; sourceTree = "<group>"; };
@@ -318,6 +321,7 @@
 		9C81578D7A36FB7EA31D1985 /* Fireworks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fireworks.swift; sourceTree = "<group>"; };
 		9C90F0A490BC13D9CC5ADF90 /* s05.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = s05.bin; sourceTree = "<group>"; };
 		9E0C646543028E968FB6287E /* SeasonalGatesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalGatesTests.swift; sourceTree = "<group>"; };
+		9E52A374C2EDA3D16DC9292B /* SpeechFocusValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechFocusValidator.swift; sourceTree = "<group>"; };
 		A0DE1B7DD5243E817418580C /* AudioBlob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioBlob.swift; sourceTree = "<group>"; };
 		A1B842CBBD6C7466F9BA2786 /* EmojiDatabaseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmojiDatabaseTests.swift; sourceTree = "<group>"; };
 		A1DA7C9FD3286A7839BA642D /* AppInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfo.swift; sourceTree = "<group>"; };
@@ -444,6 +448,7 @@
 				6401923F7190AFC65A7B6959 /* QueryStemmerTests.swift */,
 				9E0C646543028E968FB6287E /* SeasonalGatesTests.swift */,
 				D74BDC060E2EAACF7A71A3A6 /* SkinToneTests.swift */,
+				6EE88D54CC3B8F3272DF2A50 /* SpeechFocusValidatorTests.swift */,
 				164F8D93A629EBF32B4FA6AA /* SpeechSessionTests.swift */,
 				E25EC50F4D58E03E218947DF /* SymbolsDatabaseTests.swift */,
 				E4A02F340415DE388061081C /* TelemetryUsageFlagsTests.swift */,
@@ -791,6 +796,7 @@
 		FD66392257A2C6EE21EFF8BD /* Inserter */ = {
 			isa = PBXGroup;
 			children = (
+				9E52A374C2EDA3D16DC9292B /* SpeechFocusValidator.swift */,
 				D2F34180D15CF8B53F58B2A2 /* TextInserter.swift */,
 			);
 			path = Inserter;
@@ -1077,6 +1083,7 @@
 				505F6B7F84EC1D9EF7AB55C9 /* SolitaireWin.swift in Sources */,
 				368FCAE7AAA6BB9F89291A1D /* SosumiSound.swift in Sources */,
 				2C986C561744328CCA36DEFF /* SpeechController.swift in Sources */,
+				752775BD3EF19D47E5C4BBD6 /* SpeechFocusValidator.swift in Sources */,
 				24984200CF0D12C759066D73 /* SpeechSession.swift in Sources */,
 				2B3FD6118D1C2D7AB0D24588 /* SymbolsDatabase.swift in Sources */,
 				62417E7F0AA71DEF9928E2B9 /* SynthRenderer.swift in Sources */,
@@ -1131,6 +1138,7 @@
 				A11509496D8522DC13BF31F3 /* QueryStemmerTests.swift in Sources */,
 				C025CD4AE30320C3FE69028A /* SeasonalGatesTests.swift in Sources */,
 				917B8512B30F3B6E8C9D2B8C /* SkinToneTests.swift in Sources */,
+				0BC9E975804B38323245B826 /* SpeechFocusValidatorTests.swift in Sources */,
 				D490DFB4FB92437BD7EA9020 /* SpeechSessionTests.swift in Sources */,
 				91A5F2A800EA1FC0700394EA /* SymbolsDatabaseTests.swift in Sources */,
 				20024F5CE8551C80EBED5C12 /* TelemetryUsageFlagsTests.swift in Sources */,
@@ -1258,7 +1266,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "$(APP_ICON_NAME)";
 				CODE_SIGN_ENTITLEMENTS = Resources/Mojito.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -1267,7 +1275,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 0.2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.todd866.Spritz;
 				PRODUCT_MODULE_NAME = Mojito;
 				PRODUCT_NAME = Spritz;
@@ -1353,7 +1361,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "$(APP_ICON_NAME)";
 				CODE_SIGN_ENTITLEMENTS = Resources/Mojito.dev.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -1362,7 +1370,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 0.2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.todd866.Spritz.dev;
 				PRODUCT_MODULE_NAME = Mojito;
 				PRODUCT_NAME = "Spritz Dev";

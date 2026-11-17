@@ -39,3 +39,5 @@ graph mutation was introduced.
 Validation and installed revision: see task completion record.
 
 Live verification, 17 November 2026: owner confirmed tap and speech working after removing selected-profile Karabiner rule "Tap Fn for emoji; hold Fn as modifier". Its lazy Fn output withheld Fn-down during a lone hold, so the app never saw a hold. Other Karabiner rules preserved. Backup: ~/.local/state/spritz/karabiner-before-fn-speech-20261117.json. AppleFnUsageType remains0. Future setup must leave Fn press/release visible to Spritz; do not restore the legacy lazy-Fn rule.
+
+0.2.1: Codex reported three completed recognitions rejected by focus checks. Focus identity lookup now runs off the event thread with a 100 ms allowance (formerly 5 ms); late delivery remains guarded by input generation, focused field, app and secure-field checks. Separate lookup-failed, identity-mismatch and changed-context counts distinguish future failures. 373 tests passed. Live Codex insertion still needs user verification.
