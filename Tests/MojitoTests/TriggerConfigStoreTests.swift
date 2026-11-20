@@ -2,11 +2,26 @@ import Foundation
 import Testing
 @testable import Mojito
 
+private final class EphemeralTriggerDefaults: UserDefaults {
+    private let domainName: String
+    init() {
+        let name = "mojito.tests.triggers.\(UUID().uuidString)"
+        self.domainName = name
+        super.init(suiteName: name)!
+    }
+    deinit {
+        removePersistentDomain(forName: domainName)
+        let plist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(domainName).plist")
+        try? FileManager.default.removeItem(at: plist)
+    }
+}
+
 /// Round-trip persistence and one-time legacy migration of `TriggerConfig`.
 struct TriggerConfigStoreTests {
 
     private func freshSuite() -> UserDefaults {
-        UserDefaults(suiteName: "mojito.tests.triggers.\(UUID().uuidString)")!
+        EphemeralTriggerDefaults()
     }
 
     // MARK: Codable round-trip

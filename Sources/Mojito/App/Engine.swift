@@ -384,13 +384,20 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     }
 
     private func cancelCapture() {
+        let wasActive: Bool = {
+            if viewModel.isVisible || gifPickerWindow.isVisible { return true }
+            if case .idle = stateMachine.state { return false }
+            return true
+        }()
         invalidateContextSuggestions()
         stateMachine.reset()
         viewModel.reset()
         pickerWindow.hide()
         gifPickerWindow.hide()
         clearCaptureState()
-        DebugRecorder.record(.picker, "cancel")
+        if wasActive {
+            DebugRecorder.record(.picker, "cancel")
+        }
     }
 
     /// Reset the per-capture bookkeeping (context, focused-field snapshot,

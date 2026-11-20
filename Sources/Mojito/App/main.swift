@@ -53,7 +53,12 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-picker"),
         try! FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         let previewSuite = "mojito.preview.\(UUID().uuidString)"
         let previewDefaults = UserDefaults(suiteName: previewSuite)!
-        defer { previewDefaults.removePersistentDomain(forName: previewSuite) }
+        defer {
+            previewDefaults.removePersistentDomain(forName: previewSuite)
+            let plist = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Preferences/\(previewSuite).plist")
+            try? FileManager.default.removeItem(at: plist)
+        }
         let demo = ["1F602", "1F605", "1F618", "1F60E", "1F913", "1F389", "1F44D", "2764", "1F680", "1F525", "1F914", "1F916"]
         previewDefaults.set(Dictionary(uniqueKeysWithValues: demo.enumerated().map { ($0.element, 100 - $0.offset) }), forKey: PrefsKey.usageCounts)
         previewDefaults.set(demo.reversed().map { $0 }, forKey: PrefsKey.recentEmoji)

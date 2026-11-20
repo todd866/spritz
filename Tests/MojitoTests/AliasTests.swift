@@ -2,12 +2,26 @@ import Testing
 import Foundation
 @testable import Mojito
 
+private final class EphemeralAliasDefaults: UserDefaults {
+    private let domainName: String
+    init() {
+        let name = "mojito.tests.alias.\(UUID().uuidString)"
+        self.domainName = name
+        super.init(suiteName: name)!
+    }
+    deinit {
+        removePersistentDomain(forName: domainName)
+        let plist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(domainName).plist")
+        try? FileManager.default.removeItem(at: plist)
+    }
+}
+
 /// Custom shortcut (alias) storage + validation.
 @MainActor
 struct AliasStoreTests {
     private func makeStore() -> AliasStore {
-        let suite = UserDefaults(suiteName: "mojito.tests.alias.\(UUID().uuidString)")!
-        return AliasStore(defaults: suite)
+        AliasStore(defaults: EphemeralAliasDefaults())
     }
 
     @Test func startsEmpty() {
@@ -63,6 +77,12 @@ struct AliasStoreTests {
     @Test func persistsAcrossInstances() {
         let suiteName = "mojito.tests.alias.persist.\(UUID().uuidString)"
         let suite = UserDefaults(suiteName: suiteName)!
+        defer {
+            suite.removePersistentDomain(forName: suiteName)
+            let plist = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Preferences/\(suiteName).plist")
+            try? FileManager.default.removeItem(at: plist)
+        }
         let first = AliasStore(defaults: suite)
         first.add(alias: "check", hexcode: "2705")
         let second = AliasStore(defaults: suite)

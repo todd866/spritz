@@ -61,7 +61,7 @@ final class DictationAlternatives: ObservableObject {
     }
     func prepareNative() { clear(); appleTranscript = nil; status = "Waiting for dictation" }
     func receiveApple(_ text: String) { NativeDictationCapture.shared.receiveApple(text) }
-    func begin(text: String, element: AXUIElement, pid: pid_t, native: Bool = false, apple: String? = nil) {
+    func begin(text: String, element: AXUIElement?, pid: pid_t?, native: Bool = false, apple: String? = nil) {
         let wasEmbedded = embedded
         clear()
         embedded = wasEmbedded; visible = wasEmbedded
@@ -71,8 +71,9 @@ final class DictationAlternatives: ObservableObject {
         sourceChoices = native ? (appleTranscript.map { [$0, text] } ?? [text]) : [text]
         sourceLabels = native ? (appleTranscript == nil ? ["GPT"] : ["Apple", "GPT"]) : ["Apple"]
         choices = sourceChoices; labels = sourceLabels
-        selected = sourceChoices.count - 1; appliedIndex = selected; copyOnly = false
-        captureReceipt()
+        selected = sourceChoices.count - 1; appliedIndex = selected
+        copyOnly = (element == nil || pid == nil)
+        if copyOnly { status = "Copy to use" } else { captureReceipt() }
         refine()
         let id = session
         expiry = Task { @MainActor in

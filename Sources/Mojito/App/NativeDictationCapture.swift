@@ -28,8 +28,16 @@ final class NativeDictationCapture {
     private var poll: Task<Void, Never>?
     private var released = false
     private var active = false
+    private var baselineFailed = false
     private var appleTranscript: String?
-    func receiveApple(_ text: String) { if active { appleTranscript = text } }
+    private var fallbackTarget: (AXUIElement?, pid_t)?
+    func receiveApple(_ text: String) {
+        guard active else { return }
+        appleTranscript = text
+        if baselineFailed && released {
+            deliverAppleFallback()
+        }
+    }
     private var observers: [NSObjectProtocol] = []
     private init() {
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.didActivateApplicationNotification] {
@@ -39,18 +47,32 @@ final class NativeDictationCapture {
         }
     }
     private var baseline: (AXUIElement, pid_t, String, NSRange)?
-    func cancel() { active = false; generation = UUID(); poll?.cancel(); poll = nil; baseline = nil; released = false; appleTranscript = nil }
+    func cancel() {
+        active = false; generation = UUID(); poll?.cancel(); poll = nil
+        baseline = nil; baselineFailed = false; released = false
+        appleTranscript = nil; fallbackTarget = nil
+    }
     func start() {
         cancel()
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return }
         active = true
+        fallbackTarget = (nil, pid)
         let id = generation
         SpeechFocusValidator.capture(pid: pid) { [weak self] element in
             MainActor.assumeIsolated {
-                guard let self, self.generation == id, let element else { return }
+                guard let self, self.generation == id else { return }
+                guard let element else {
+                    self.handleBaselineFailure(element: nil, pid: pid)
+                    return
+                }
+                self.fallbackTarget = (element, pid)
                 DictationFieldReader.read(element: element, pid: pid) { [weak self] value, selection in
                     MainActor.assumeIsolated {
-                        guard let self, self.generation == id, let value, let selection else { return }
+                        guard let self, self.generation == id else { return }
+                        guard let value, let selection else {
+                            self.handleBaselineFailure(element: element, pid: pid)
+                            return
+                        }
                         self.baseline = (element, pid, value, selection)
                         if self.released { self.waitForInsertion() }
                     }
@@ -58,13 +80,40 @@ final class NativeDictationCapture {
             }
         }
     }
-    func finish() { released = true; if baseline != nil { waitForInsertion() } }
+    func finish() {
+        released = true
+        if baseline != nil {
+            waitForInsertion()
+        } else if baselineFailed, appleTranscript != nil {
+            deliverAppleFallback()
+        }
+    }
+    private func handleBaselineFailure(element: AXUIElement?, pid: pid_t) {
+        baselineFailed = true
+        fallbackTarget = (element, pid)
+        LocalTelemetry.shared.record(.nativeBaselineFailed)
+        if released, appleTranscript != nil {
+            deliverAppleFallback()
+        }
+    }
+    private func deliverAppleFallback() {
+        guard let apple = appleTranscript, !apple.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            cancel(); return
+        }
+        let target = fallbackTarget
+        cancel()
+        LocalTelemetry.shared.record(.nativeFallbackToApple)
+        DictationAlternatives.shared.begin(text: apple, element: target?.0, pid: target?.1, native: false)
+    }
     private func waitForInsertion() {
         guard poll == nil, let (element, pid, before, selection) = baseline else { return }
         let id = generation
         poll = Task { @MainActor in
             defer { if self.generation == id { self.poll = nil; self.baseline = nil; self.appleTranscript = nil } }
             var previous: String?, stable = 0
+            // When an Apple transcript is already captured, fall back to it after
+            // 5 s if no native insertion lands rather than waiting a full 30 s.
+            var ticksAfterApple = 0
             for _ in 0..<120 {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard !Task.isCancelled, self.generation == id,
@@ -73,9 +122,27 @@ final class NativeDictationCapture {
                     DictationFieldReader.read(element: element, pid: pid) { continuation.resume(returning: ($0, $1)) }
                 }
                 guard !Task.isCancelled, self.generation == id else { return }
-                guard let value, let caret else { self.cancel(); return }
-                guard value != before else { continue }
-                guard let text = DictatedInsertion.extract(before: before, selection: selection, after: value, caret: caret) else { self.cancel(); return }
+                guard let value, let caret else {
+                    LocalTelemetry.shared.record(.nativeDiffMismatch)
+                    self.deliverAppleFallback()
+                    return
+                }
+                if value == before {
+                    if self.appleTranscript != nil {
+                        ticksAfterApple += 1
+                        if ticksAfterApple >= 20 {
+                            LocalTelemetry.shared.record(.nativeCaptureTimeout)
+                            self.deliverAppleFallback()
+                            return
+                        }
+                    }
+                    continue
+                }
+                guard let text = DictatedInsertion.extract(before: before, selection: selection, after: value, caret: caret) else {
+                    LocalTelemetry.shared.record(.nativeDiffMismatch)
+                    self.deliverAppleFallback()
+                    return
+                }
                 stable = text == previous ? stable + 1 : 0; previous = text
                 if stable >= 2 {
                     let apple = self.appleTranscript
@@ -85,7 +152,8 @@ final class NativeDictationCapture {
                     return
                 }
             }
-            self.cancel()
+            LocalTelemetry.shared.record(.nativeCaptureTimeout)
+            self.deliverAppleFallback()
         }
     }
 }

@@ -1,5 +1,7 @@
 import AppKit
+import Carbon.HIToolbox
 import Combine
+import IOKit
 import KeyboardShortcuts
 
 @MainActor
@@ -10,6 +12,7 @@ final class MenuBarController {
     private var openSettings: (() -> Void)?
     private var observers = Set<AnyCancellable>()
     private var showPrefCancellable: AnyCancellable?
+    private weak var secureInputItem: NSMenuItem?
     private weak var checkForUpdatesItem: NSMenuItem?
     private weak var resumeItem: NSMenuItem?
     private weak var pauseHourItem: NSMenuItem?
@@ -181,6 +184,11 @@ final class MenuBarController {
         menu.autoenablesItems = false
 
         menu.addItem(makeStatusItem())
+        let secureItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        secureItem.isEnabled = false
+        secureItem.isHidden = true
+        menu.addItem(secureItem)
+        secureInputItem = secureItem
         menu.addItem(.separator())
 
         let pauseHour = NSMenuItem(title: String(localized: "Pause for 1 hour"), action: #selector(MenuActions.pauseHour), keyEquivalent: "").configured(target: MenuActions.shared)
@@ -218,12 +226,16 @@ final class MenuBarController {
         menu.addItem(NSMenuItem(title: String(localized: "Quit \(AppInfo.displayName)"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         MenuActions.shared.bind(self)
+        MenuDelegateBridge.shared.onWillOpen = { [weak self] in
+            self?.refreshMenu()
+        }
         return menu
     }
 
     fileprivate func refreshMenu() {
         guard let menu = statusItem?.menu, let statusRow = menu.item(at: 0) else { return }
         statusRow.attributedTitle = statusTitle()
+        refreshSecureInputItem()
 
         let isPaused = (engine?.pausedUntil.map { $0 > Date() } ?? false)
         pauseHourItem?.isHidden = isPaused
@@ -232,6 +244,41 @@ final class MenuBarController {
         // Browser insertion goes dark when paused / permissions are missing
         // (showBrowser guards on isActive), so the item shouldn't look live.
         browseItem?.isEnabled = engine?.isActive ?? false
+    }
+
+    private func refreshSecureInputItem() {
+        guard let item = secureInputItem else { return }
+        guard IsSecureEventInputEnabled() else {
+            item.isHidden = true
+            return
+        }
+        let holder = Self.secureInputHolderName()
+        let label = holder.map { "Secure Input held by \($0) · Fn uses fallback" }
+            ?? "Secure Input active · Fn uses fallback"
+        item.attributedTitle = NSAttributedString(string: label, attributes: [
+            .font: NSFont.menuFont(ofSize: 0),
+            .foregroundColor: NSColor.systemOrange
+        ])
+        item.image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "Secure Input active")
+        item.isHidden = false
+    }
+
+    private static func secureInputHolderName() -> String? {
+        let root = IORegistryGetRootEntry(kIOMainPortDefault)
+        guard root != IO_OBJECT_NULL else { return nil }
+        defer { IOObjectRelease(root) }
+        guard let users = IORegistryEntryCreateCFProperty(root, "IOConsoleUsers" as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? [[String: Any]] else { return nil }
+        for user in users {
+            if let pidNumber = user["kCGSSessionSecureInputPID"] as? NSNumber {
+                let pid = pid_t(pidNumber.int32Value)
+                if let name = NSRunningApplication(processIdentifier: pid)?.localizedName, !name.isEmpty {
+                    return name
+                }
+                return "PID \(pid)"
+            }
+        }
+        return nil
     }
 
     private func refreshUpdatesItem() {
@@ -319,6 +366,10 @@ final class MenuBarController {
 @MainActor
 private final class MenuDelegateBridge: NSObject, NSMenuDelegate {
     static let shared = MenuDelegateBridge()
+    var onWillOpen: (() -> Void)?
+    func menuWillOpen(_ menu: NSMenu) {
+        onWillOpen?()
+    }
 }
 
 @MainActor

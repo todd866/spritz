@@ -90,12 +90,43 @@ final class RefinementRunner {
         }
     }
 
+    nonisolated static func resolveExecutable(
+        for provider: RefinementProvider,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> URL? {
+        let candidates: [URL]
+        switch provider {
+        case .codex:
+            var list = [
+                URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"),
+                home.appendingPathComponent(".local/bin/codex"),
+                URL(fileURLWithPath: "/opt/homebrew/bin/codex"),
+                URL(fileURLWithPath: "/usr/local/bin/codex"),
+            ]
+            let nvmRoot = home.appendingPathComponent(".nvm/versions/node")
+            if let versions = try? FileManager.default.contentsOfDirectory(at: nvmRoot, includingPropertiesForKeys: nil) {
+                for dir in versions.sorted(by: { $0.lastPathComponent.compare($1.lastPathComponent, options: .numeric) == .orderedDescending }) {
+                    list.append(dir.appendingPathComponent("bin/codex"))
+                }
+            }
+            candidates = list
+        case .claude:
+            candidates = [
+                home.appendingPathComponent(".local/bin/claude"),
+                URL(fileURLWithPath: "/opt/homebrew/bin/claude"),
+                URL(fileURLWithPath: "/usr/local/bin/claude"),
+            ]
+        case .off:
+            return nil
+        }
+        return candidates.first { isExecutable($0.path) }
+    }
+
     private func launch(_ transcript: String, provider: RefinementProvider, reference: String?, overrides: [String], completion: @escaping (RefinementResult?) -> Void) {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let executable = testCommand?.0 ?? (provider == .codex
-            ? URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
-            : home.appendingPathComponent(".local/bin/claude"))
-        guard FileManager.default.isExecutableFile(atPath: executable.path) else { completion(nil); return }
+        guard let executable = testCommand?.0 ?? Self.resolveExecutable(for: provider, home: home),
+              FileManager.default.isExecutableFile(atPath: executable.path) else { completion(nil); return }
         let process = Process(), input = Pipe(), output = Pipe()
         process.executableURL = executable
         // No repository or surrounding document is supplied to the model.
@@ -104,14 +135,15 @@ final class RefinementRunner {
         var environment = ProcessInfo.processInfo.environment
         environment.removeValue(forKey: "ANTHROPIC_API_KEY")
         environment.removeValue(forKey: "OPENAI_API_KEY")
-        environment["PATH"] = home.appendingPathComponent(".local/bin").path + ":/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        let execDir = executable.deletingLastPathComponent().path
+        environment["PATH"] = execDir + ":" + home.appendingPathComponent(".local/bin").path + ":/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         process.environment = environment
         if let testCommand {
             process.arguments = testCommand.1
         } else if provider == .codex {
             guard let schemaURL = Bundle.main.url(forResource: "refinement-schema", withExtension: "json") else { completion(nil); return }
             var args = ["exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "--json", "--output-schema", schemaURL.path,
-                        "-c", "web_search=\"disabled\"", "-c", "model_reasoning_effort=\"medium\"", "-c", "agents.enabled=false"]
+                        "-c", "web_search=\"disabled\"", "-c", "model_reasoning_effort=\"low\"", "-c", "agents.enabled=false"]
             for feature in ["shell_tool", "apps", "multi_agent_v2", "in_app_browser", "computer_use", "view_image", "skill_search", "tool_suggest", "plugins", "remote_plugin", "memories"] {
                 args += ["--disable", feature]
             }

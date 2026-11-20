@@ -285,11 +285,25 @@ struct EmojiLetterBindingsTests {
     }
 }
 
+private final class EphemeralQuickAccessDefaults: UserDefaults {
+    private let domainName: String
+    init() {
+        let name = "mojito.tests.quickaccess.\(UUID().uuidString)"
+        self.domainName = name
+        super.init(suiteName: name)!
+    }
+    deinit {
+        removePersistentDomain(forName: domainName)
+        let plist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(domainName).plist")
+        try? FileManager.default.removeItem(at: plist)
+    }
+}
+
 @MainActor
 struct QuickAccessStoreTests {
     private func makeStore() -> QuickAccessStore {
-        let suite = UserDefaults(suiteName: "mojito.tests.quickaccess.\(UUID().uuidString)")!
-        return QuickAccessStore(defaults: suite)
+        QuickAccessStore(defaults: EphemeralQuickAccessDefaults())
     }
 
     @Test func startsAllAuto() {
@@ -324,6 +338,12 @@ struct QuickAccessStoreTests {
     @Test func persistsAcrossInstances() {
         let suiteName = "mojito.tests.quickaccess.persist.\(UUID().uuidString)"
         let suite = UserDefaults(suiteName: suiteName)!
+        defer {
+            suite.removePersistentDomain(forName: suiteName)
+            let plist = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Preferences/\(suiteName).plist")
+            try? FileManager.default.removeItem(at: plist)
+        }
         let first = QuickAccessStore(defaults: suite)
         first.pin("2764", at: 2)
         let second = QuickAccessStore(defaults: suite)
@@ -530,7 +550,12 @@ struct PersonalBrowserTests {
     private func withDefaults(_ body: (UserDefaults) throws -> Void) rethrows {
         let name = "mojito.tests.personal.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer {
+            defaults.removePersistentDomain(forName: name)
+            let plist = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Preferences/\(name).plist")
+            try? FileManager.default.removeItem(at: plist)
+        }
         try body(defaults)
     }
     private func model(_ defaults: UserDefaults) -> EmojiBrowserViewModel {

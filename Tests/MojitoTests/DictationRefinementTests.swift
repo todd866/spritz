@@ -55,6 +55,14 @@ struct RefinementRunnerTests {
     @Test func parsesQuotedAndUnquotedMCPServerNames() {
         #expect(RefinementRunner.serverOverrides("[mcp_servers.foo]\nurl='x'\n[mcp_servers.foo.env] # string values\n[mcp_servers.\"bar-baz\"]\n") == ["-c", "mcp_servers.foo.enabled=false", "-c", "mcp_servers.\"bar-baz\".enabled=false"])
     }
+    @Test func resolvesCodexExecutableAcrossFallbacks() {
+        let home = URL(fileURLWithPath: "/tmp/nonexistent-home-\(UUID().uuidString)")
+        let bundled = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+        let homebrew = "/opt/homebrew/bin/codex"
+        #expect(RefinementRunner.resolveExecutable(for: .codex, home: home, isExecutable: { $0 == bundled })?.path == bundled)
+        #expect(RefinementRunner.resolveExecutable(for: .codex, home: home, isExecutable: { $0 == homebrew })?.path == homebrew)
+        #expect(RefinementRunner.resolveExecutable(for: .off, home: home, isExecutable: { _ in true }) == nil)
+    }
 }
 
 @MainActor
@@ -124,5 +132,14 @@ struct CombinedPickerTests {
         model.hide()
         #expect(!model.embedded)
         #expect(model.choices == ["Original", "Reviewed"])
+    }
+    @Test func fallbackWithoutElementEntersCopyOnlyMode() {
+        let model = DictationAlternatives(preview: true)
+        model.provider = .off
+        model.begin(text: "Dictated sentence.", element: nil, pid: nil, native: false)
+        #expect(model.copyOnly)
+        #expect(model.choices == ["Dictated sentence."])
+        #expect(model.labels == ["Apple"])
+        model.clear()
     }
 }
