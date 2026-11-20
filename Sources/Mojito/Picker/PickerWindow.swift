@@ -2,17 +2,33 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
+/// Borderless `NSPanel` defaults `canBecomeKey` to `false`. Allowing key focus
+/// only when requested lets the picker capture keystrokes directly via a local
+/// event monitor while macOS Secure Event Input blocks the global `CGEventTap`,
+/// without changing normal non-key behavior.
+private final class PickerPanel: NSPanel {
+    var allowsKeyFocus = false
+    override var canBecomeKey: Bool { allowsKeyFocus }
+    override var canBecomeMain: Bool { false }
+}
+
 @MainActor
 final class PickerWindow {
     /// Engine resets the state machine and hides the picker.
     var onClickAway: (() -> Void)?
+    /// Routes keystrokes captured locally while macOS Secure Event Input blocks
+    /// the global event tap. Returns true when consumed.
+    var onLocalKeyDown: ((CGEvent) -> Bool)?
 
-    private let panel: NSPanel
+    private(set) var isCapturingLocalKeys = false
+
+    private let panel: PickerPanel
     private let hostingView: NSHostingView<PickerView>
     private let viewModel: PickerViewModel
     private let chrome: NSView
     private var localClickMonitor: Any?
     private var globalClickMonitor: Any?
+    private var localKeyMonitor: Any?
     /// Separate panel for the pill's number-hotkey tooltip — the pill panel
     /// is too short to host a label above its cells without clipping.
     private var tooltipPanel: NSPanel?
@@ -23,7 +39,7 @@ final class PickerWindow {
         self.hostingView = NSHostingView(rootView: PickerView(viewModel: viewModel))
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
-        self.panel = NSPanel(
+        self.panel = PickerPanel(
             contentRect: NSRect(x: 0, y: 0, width: PickerLayout.width, height: 100),
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
@@ -191,6 +207,7 @@ final class PickerWindow {
 
     /// Anchors near the caret rect, or the mouse if nil.
     func show(near caret: CGRect?) {
+        stopLocalKeyCapture()
         hidePillTooltip()  // clear any stale tooltip; re-shows on hover
         // Pill / list mode tracks the caret; if the user dragged a previous
         // expanded session, snap back to caret-anchored on the next open.
@@ -215,7 +232,10 @@ final class PickerWindow {
     /// Grow (or open) the panel into the full browser grid. When already on
     /// screen (the pill), it unfolds from the pill's top-left with an eased
     /// animation; otherwise it just appears at full size near the caret.
-    func showExpanded(near caret: CGRect?) {
+    /// When `captureLocalKeys` is true (Secure Event Input is blocking the
+    /// global CGEventTap), the non-activating panel takes key status so it can
+    /// read keystrokes directly via a local monitor without switching apps.
+    func showExpanded(near caret: CGRect?, captureLocalKeys: Bool = false) {
         hidePillTooltip()
         matchSystemAppearance()
         // Browser window can be dragged from any background area (search row,
@@ -237,8 +257,31 @@ final class PickerWindow {
             panel.setFrame(positionedFrame(anchor: anchor, size: size), display: true)
             panel.orderFrontRegardless()
         }
+        if captureLocalKeys {
+            panel.allowsKeyFocus = true
+            panel.becomesKeyOnlyIfNeeded = false
+            panel.makeKey()
+            startLocalKeyCapture()
+        } else {
+            stopLocalKeyCapture()
+        }
         viewModel.isVisible = true
         installClickMonitors()
+    }
+
+    /// Briefly yields key status back to the frontmost app while inserting a
+    /// Shift-picked emoji, then reclaims key focus if the browser stays open.
+    func suspendLocalKeyCapture(forInsertion work: @escaping () -> Void) {
+        guard isCapturingLocalKeys else { work(); return }
+        panel.orderOut(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { [weak self] in
+            work()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { [weak self] in
+                guard let self, self.viewModel.isVisible, self.isCapturingLocalKeys else { return }
+                self.panel.orderFrontRegardless()
+                self.panel.makeKey()
+            }
+        }
     }
 
     /// Keep a frame fully on the screen that hosts `reference`.
@@ -256,10 +299,31 @@ final class PickerWindow {
 
     func hide() {
         DictationAlternatives.shared.hide()
+        stopLocalKeyCapture()
         panel.orderOut(nil)
         viewModel.isVisible = false
         removeClickMonitors()
         hidePillTooltip()
+    }
+
+    // MARK: - Local key capture (Secure Event Input fallback)
+
+    private func startLocalKeyCapture() {
+        isCapturingLocalKeys = true
+        guard localKeyMonitor == nil else { return }
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.isCapturingLocalKeys, event.window === self.panel,
+                  let cgEvent = event.cgEvent else { return event }
+            return self.onLocalKeyDown?(cgEvent) == true ? nil : event
+        }
+    }
+
+    private func stopLocalKeyCapture() {
+        isCapturingLocalKeys = false
+        panel.allowsKeyFocus = false
+        panel.becomesKeyOnlyIfNeeded = true
+        if let monitor = localKeyMonitor { NSEvent.removeMonitor(monitor) }
+        localKeyMonitor = nil
     }
 
     // MARK: - Click-away

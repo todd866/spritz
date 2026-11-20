@@ -114,7 +114,7 @@ final class KeyMonitor {
            delegate?.keyMonitor(self, cycleSpeechBackward: event.flags.contains(.maskShift)) == true { return nil }
 
         if cancelEscape { SpeechController.shared.cancel(); return nil }
-        let input = translate(event: event)
+        let input = Self.translate(event: event)
         guard let input else { return Unmanaged.passUnretained(event) }
 
         let consumed = delegate?.keyMonitor(self, didReceive: input) ?? false
@@ -150,7 +150,7 @@ final class KeyMonitor {
         }
     }
 
-    private func translate(event: CGEvent) -> TriggerInput? {
+    nonisolated static func translate(event: CGEvent) -> TriggerInput? {
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
 
@@ -193,7 +193,7 @@ final class KeyMonitor {
         return .cancelChar(char)
     }
 
-    private func isNameChar(_ c: Character) -> Bool {
+    private nonisolated static func isNameChar(_ c: Character) -> Bool {
         if c.isLetter || c.isNumber { return true }
         // `'` lets `:'(` / `:')` capture with body `'` and terminator `(`/`)`.
         return c == "_" || c == "-" || c == "+" || c == "'"

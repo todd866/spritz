@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Combine
 import Foundation
 import os.log
@@ -111,6 +112,9 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         // Click-away behaves like Esc but doesn't consume the click.
         pickerWindow.onClickAway = { [weak self] in
             self?.cancelCapture()
+        }
+        pickerWindow.onLocalKeyDown = { [weak self] event in
+            self?.handleLocalKeyDown(event) ?? false
         }
 
         // Mouse-pick on a compact favorites-pill cell — same resolution path
@@ -311,6 +315,11 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         case .capturing, .stickyPicking:
             break
         case .browsing:
+            // When the non-activating panel holds key status under Secure Event
+            // Input, the host window temporarily resigning key can emit a stray
+            // AX focus change; dismissal still happens via click-away, app
+            // activation, Space change, Esc, or Fn.
+            if pickerWindow.isCapturingLocalKeys { return }
             // The browser can be opened over a no-focus context (e.g. the
             // Finder, to copy a glyph) — there's no captured field to drift
             // away from, so a stray focus change must not self-dismiss it.
@@ -690,6 +699,20 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             case .tap: break
             }
         }
+    }
+
+    private func handleLocalKeyDown(_ event: CGEvent) -> Bool {
+        guard case .browsing = stateMachine.state else { return false }
+        if event.getIntegerValueField(.eventSourceUserData) == TextInserter.synthMarker {
+            return false
+        }
+        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+        if KeyMonitor.isSpeechCycle(keyCode: keyCode, flags: event.flags),
+           keyMonitor(monitor, cycleSpeechBackward: event.flags.contains(.maskShift)) {
+            return true
+        }
+        guard let input = KeyMonitor.translate(event: event) else { return false }
+        return process(input: input)
     }
 
     private func process(input: TriggerInput) -> Bool {
@@ -1316,7 +1339,9 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             self.viewModel.expanded = true
             let anchor = CaretLocator.caretRect()
             PickerContextStore.capture(caretOutcome: CaretLocator.lastOutcome, resolvedCaret: anchor)
-            DebugRecorder.record(.picker, "browserOpen")
+            let captureLocalKeys = IsSecureEventInputEnabled()
+            if captureLocalKeys { LocalTelemetry.shared.record(.secureInputFallback) }
+            DebugRecorder.record(.picker, "browserOpen", captureLocalKeys ? ["localKeyCapture": "true"] : [:])
             if let pending = self.bridgeOpen {
                 let cache = FocusedElementCache.shared
                 guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pending.pid,
@@ -1324,9 +1349,9 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
                       cache.haveFieldInfo, cache.focusedIsEditable, !cache.focusedIsSecure else {
                     self.bridgeOpen = nil; self.collapseBrowser(); pending.completion(false); return
                 }
-                self.pickerWindow.showExpanded(near: anchor)
+                self.pickerWindow.showExpanded(near: anchor, captureLocalKeys: captureLocalKeys)
                 self.bridgeOpen = nil; pending.completion(true)
-            } else { self.pickerWindow.showExpanded(near: anchor) }
+            } else { self.pickerWindow.showExpanded(near: anchor, captureLocalKeys: captureLocalKeys) }
         }
     }
 
@@ -1366,6 +1391,7 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             if context.focusedFieldIsSecure { return true }
             return !context.focusedFieldIsEditable
         }()
+        let usedLocalKeyCapture = pickerWindow.isCapturingLocalKeys
         if keepOpen {
             // Shift-pick: the grid stays up. Nothing selected (e.g. a
             // no-match search) → keep the pending delete span intact for a
@@ -1380,6 +1406,18 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
         let glyph = emoji.tonedGlyph
         if copy {
             copyToClipboard(glyph)
+        } else if usedLocalKeyCapture {
+            if keepOpen {
+                pickerWindow.suspendLocalKeyCapture {
+                    TextInserter.replace(charactersToDelete: delete, with: glyph)
+                }
+            } else {
+                // Allow WindowServer to return key status to the frontmost app
+                // after `panel.orderOut(nil)` before posting synthetic events.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                    TextInserter.replace(charactersToDelete: delete, with: glyph)
+                }
+            }
         } else {
             TextInserter.replace(charactersToDelete: delete, with: glyph)
         }

@@ -6,7 +6,7 @@ import os
 final class LocalTelemetry {
     enum Event: String, Codable, CaseIterable {
         case nativeTranscriptCaptured, refinementCycle, refinementCancel, refinementStart, refinementReady, refinementFailure, refinementChosen, refinementCopy
-        case fnTap, fnHold, fnCancelled, pickerOpen, pickerCancel, insertionAttempt, tapLost
+        case fnTap, fnHold, fnCancelled, pickerOpen, pickerCancel, insertionAttempt, tapLost, secureInputFallback
         case speechStart, speechFinish, speechCancel, speechFailure, speechInsertion, speechFocusRejected, speechPermissionRequired, speechUnavailable, speechFocusChanged, speechFocusLookupFailed, speechFocusMismatch
     }
     struct Metric: Codable { var count = 0; var timedCount = 0; var totalMs = 0.0; var maxMs = 0.0 }
