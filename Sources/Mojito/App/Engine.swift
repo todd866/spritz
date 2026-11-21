@@ -80,6 +80,8 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
     /// undo entry.
     private var inputSeq: Int = 0
     private var speechDeliveryGeneration = 0
+    /// Speech provider chosen when Fn went down, so its release takes the same path.
+    private var pressSpeechInput: SpeechInputProvider?
     /// `inputSeq` of the most recent digit keystroke. Lets the deferred heart
     /// insert skip itself when a digit lands immediately after (`<30`) before
     /// the conversion (and its undo entry) has even been created.
@@ -620,7 +622,8 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
             case .start:
                 guard SystemEmojiPickerReplacer.shared.globeOpensBrowser, self.isActive else { return }
                 LocalTelemetry.shared.record(.fnHold)
-                let speechInput = SpeechInputProvider.current
+                let speechInput = SpeechInputProvider.forPress(.current, chatGPTRunning: SpeechInputProvider.chatGPTIsRunning)
+                self.pressSpeechInput = speechInput
                 if speechInput != .apple {
                     DictationAlternatives.shared.prepareNative()
                     NativeDictationCapture.shared.start()
@@ -696,10 +699,12 @@ final class Engine: ObservableObject, KeyMonitorDelegate {
                     }
                 }
             case .finish:
-                if SpeechInputProvider.current != .apple { NativeDictationCapture.shared.finish() }
+                if (self.pressSpeechInput ?? .current) != .apple { NativeDictationCapture.shared.finish() }
+                self.pressSpeechInput = nil
                 if speech.isActive { speech.finish() }
                 else { self.speechDeliveryGeneration &+= 1 } // Released before the field snapshot completed.
             case .cancel:
+                self.pressSpeechInput = nil
                 NativeDictationCapture.shared.cancel()
                 self.speechDeliveryGeneration &+= 1
                 LocalTelemetry.shared.record(.fnCancelled); speech.cancel()

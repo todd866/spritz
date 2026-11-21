@@ -186,6 +186,7 @@
 		E7863EC9C5B2434DB6947839 /* FnGestureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DE5542EA28442B0A039F1EA /* FnGestureTests.swift */; };
 		E8715EE20B3652E19AEB690D /* QueryStemmer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 276275D749C5A73951269AF7 /* QueryStemmer.swift */; };
 		E9340C650BD416393A44ACC3 /* DockIconManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02F1996A3DED7A0A133E24C /* DockIconManager.swift */; };
+		E9BAF4B38CFBB81CC2628081 /* SpeechProviderForPressTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEDE31F7391CEC13EF087608 /* SpeechProviderForPressTests.swift */; };
 		EAF2B984187615EBAF67954E /* DiskOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDDFF6254C8A58E63AC223D5 /* DiskOptimizer.swift */; };
 		ECC3936D06DC519BCE249F8D /* PermissionsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2027256AFD59D65C41FAA2AD /* PermissionsCoordinator.swift */; };
 		EE298513CD9C097AD2AEA237 /* TelemetryConsent.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD51C35233BDBC98AE0418B /* TelemetryConsent.swift */; };
@@ -392,6 +393,7 @@
 		DBB27C78330DB1E6F05BDAE7 /* EmoticonTableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmoticonTableTests.swift; sourceTree = "<group>"; };
 		DC6BDC5E636ADC61D8671950 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		DD6171603CD5F5CC6ED9A636 /* ExclusionsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExclusionsSettings.swift; sourceTree = "<group>"; };
+		DEDE31F7391CEC13EF087608 /* SpeechProviderForPressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechProviderForPressTests.swift; sourceTree = "<group>"; };
 		DF0A9FF25BC996BC640A35A0 /* s01.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = s01.bin; sourceTree = "<group>"; };
 		DF44D58B49F923004BEED6E7 /* FlyingToasters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlyingToasters.swift; sourceTree = "<group>"; };
 		DF80FD4039CF36F39120673D /* TriggerMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriggerMatcher.swift; sourceTree = "<group>"; };
@@ -462,6 +464,7 @@
 				9E0C646543028E968FB6287E /* SeasonalGatesTests.swift */,
 				D74BDC060E2EAACF7A71A3A6 /* SkinToneTests.swift */,
 				6EE88D54CC3B8F3272DF2A50 /* SpeechFocusValidatorTests.swift */,
+				DEDE31F7391CEC13EF087608 /* SpeechProviderForPressTests.swift */,
 				164F8D93A629EBF32B4FA6AA /* SpeechSessionTests.swift */,
 				E25EC50F4D58E03E218947DF /* SymbolsDatabaseTests.swift */,
 				E4A02F340415DE388061081C /* TelemetryUsageFlagsTests.swift */,
@@ -1163,6 +1166,7 @@
 				C025CD4AE30320C3FE69028A /* SeasonalGatesTests.swift in Sources */,
 				917B8512B30F3B6E8C9D2B8C /* SkinToneTests.swift in Sources */,
 				0BC9E975804B38323245B826 /* SpeechFocusValidatorTests.swift in Sources */,
+				E9BAF4B38CFBB81CC2628081 /* SpeechProviderForPressTests.swift in Sources */,
 				D490DFB4FB92437BD7EA9020 /* SpeechSessionTests.swift in Sources */,
 				91A5F2A800EA1FC0700394EA /* SymbolsDatabaseTests.swift in Sources */,
 				20024F5CE8551C80EBED5C12 /* TelemetryUsageFlagsTests.swift in Sources */,

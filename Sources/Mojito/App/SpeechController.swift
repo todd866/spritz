@@ -14,6 +14,20 @@ enum SpeechInputProvider: String, CaseIterable, Identifiable {
     }
 }
 
+extension SpeechInputProvider {
+    /// Bundle IDs of the ChatGPT desktop app (it became com.openai.codex in late 2026).
+    static let chatGPTBundleIDs: Set<String> = ["com.openai.codex", "com.openai.chat"]
+    /// The provider for one Fn press. A ChatGPT mode sends Fn to the ChatGPT app's own
+    /// hold-to-dictate shortcut; with that app not running nobody answers, so the press
+    /// dictates with Apple instead of doing nothing (21 Nov 2026).
+    static func forPress(_ preferred: Self, chatGPTRunning: Bool) -> Self {
+        preferred != .apple && !chatGPTRunning ? .apple : preferred
+    }
+    static var chatGPTIsRunning: Bool {
+        NSWorkspace.shared.runningApplications.contains { chatGPTBundleIDs.contains($0.bundleIdentifier ?? "") }
+    }
+}
+
 /// Serializes audio graph changes away from the keyboard event tap.
 private final class SpeechCapture {
     private let queue = DispatchQueue(label: "Spritz.speechCapture", qos: .userInitiated)
