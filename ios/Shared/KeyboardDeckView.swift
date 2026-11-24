@@ -353,11 +353,11 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
     private let selectionFeedback = UISelectionFeedbackGenerator()
 
     // Touch state
-    private weak var activeTouch: UITouch?
+    private var activeTouchID: UInt?
     private weak var startTile: KeyTileView?
     private var startPoint: CGPoint = .zero
     private var touchStartTime: TimeInterval = 0
-    private weak var shiftHoldTouch: UITouch?
+    private var shiftHoldTouchID: UInt?
     private var shiftBeforeTouch: ShiftStateDTO = .off
     private var shiftHoldTypedAny = false
     private var didCapsLockOnHold = false
@@ -376,6 +376,13 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
     private var swipeDeleteLastX: CGFloat = 0
     private var lastShiftTapTime: TimeInterval = 0
 
+    struct DebugTileInfo {
+        let id: String
+        let isUtility: Bool
+        let isLetter: Bool
+        let frame: CGRect
+    }
+
     private static let accents: [String: [String]] = [
         "a": ["a", "à", "á", "â", "ä", "æ", "ã", "å"],
         "c": ["c", "ç", "ć", "č"],
@@ -393,6 +400,7 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        accessibilityIdentifier = "spritz.keyboardDeck"
         isMultipleTouchEnabled = true
         clipsToBounds = false
 
@@ -410,6 +418,72 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    private static func tileID(for spec: KeySpec) -> String {
+        switch spec.action {
+        case let .char(lower, _, _): return lower
+        case let .symbol(s): return s
+        case .shift: return "shift"
+        case .backspace: return "backspace"
+        case let .layer(_, title): return "layer:\(title)"
+        case .globe: return "globe"
+        case .emoji: return "emoji"
+        case .space: return "space"
+        case .returnKey: return "return"
+        }
+    }
+
+    var debugTiles: [DebugTileInfo] {
+        rows.flatMap { row in
+            row.map { tv in
+                let isLetter: Bool
+                if case .char = tv.spec.action { isLetter = true } else { isLetter = false }
+                return DebugTileInfo(
+                    id: Self.tileID(for: tv.spec),
+                    isUtility: tv.spec.isUtility,
+                    isLetter: isLetter,
+                    frame: tv.frame
+                )
+            }
+        }
+    }
+
+    var debugPopupFrame: CGRect? {
+        popupView.isHidden ? nil : popupView.frame
+    }
+
+    var debugIsTrackpadActive: Bool {
+        isTrackpad
+    }
+
+    var debugNonSpaceAlpha: CGFloat {
+        for row in rows {
+            for tv in row {
+                if case .char = tv.spec.action {
+                    return tv.subviews.first?.alpha ?? 1.0
+                }
+            }
+        }
+        return 1.0
+    }
+
+    var debugShiftState: ShiftStateDTO {
+        shiftState
+    }
+
+    func debugHitTileID(at point: CGPoint, applyBias: Bool = true) -> String? {
+        guard let tv = tile(at: point, applyBias: applyBias) else { return nil }
+        return Self.tileID(for: tv.spec)
+    }
+
+    func debugTileFrame(id: String) -> CGRect? {
+        for row in rows {
+            for tv in row where Self.tileID(for: tv.spec) == id {
+                return tv.frame
+            }
+        }
+        return nil
     }
 
     func setLikelyNextChars(_ chars: String) {
@@ -447,7 +521,7 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
             needsRebuild = true
         }
         if let s = shiftState {
-            self.shiftState = (shiftHoldTouch != nil && s == .off) ? .once : s
+            self.shiftState = (shiftHoldTouchID != nil && s == .off) ? .once : s
         }
         if let r = returnKeyType { self.returnKeyType = r }
 
@@ -489,7 +563,7 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
     private func refreshAllTiles() {
         for row in rows {
             for tile in row {
-                let isShiftHeld = (tile.spec.action == .shift && shiftHoldTouch != nil)
+                let isShiftHeld = (tile.spec.action == .shift && shiftHoldTouchID != nil)
                 let isPressed = isShiftHeld || (tile === startTile && !isGliding && !isTrackpad)
                 tile.configure(
                     theme: theme,
@@ -712,7 +786,7 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
 
     private func resetActiveTouchState() {
         clearTimers()
-        activeTouch = nil
+        activeTouchID = nil
         startTile = nil
         isFlicking = false
         isGliding = false
@@ -727,95 +801,135 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
         refreshAllTiles()
     }
 
+    private func touchID(for touch: UITouch) -> UInt {
+        UInt(bitPattern: ObjectIdentifier(touch))
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         impactFeedback.prepare()
         for touch in touches {
-            let pt = touch.location(in: self)
-            guard let tv = tile(at: pt, applyBias: true) else { continue }
-
-            if tv.spec.action == .shift && shiftHoldTouch == nil {
-                shiftHoldTouch = touch
-                shiftBeforeTouch = shiftState
-                shiftHoldTypedAny = false
-                didCapsLockOnHold = false
-                if shiftState == .off {
-                    shiftState = .once
-                    onShiftChanged?(.once)
-                }
-                triggerLightHaptic()
-                UIDevice.current.playInputClick()
-                startShiftLongPressTimer()
-                refreshAllTiles()
-                continue
-            }
-
-            if let prev = startTile, activeTouch != nil, prev !== tv {
-                // Fast two-thumb rollover: commit previous tap cleanly with its real touch point.
-                let prevPoint = startPoint
-                commitActiveKey(startPoint: prevPoint, event: event)
-                resetActiveTouchState()
-            }
-
-            if shiftHoldTouch != nil {
-                shiftHoldTypedAny = true
-                shiftLongPressTimer?.invalidate()
-                shiftLongPressTimer = nil
-            }
-
-            activeTouch = touch
-            startTile = tv
-            startPoint = pt
-            touchStartTime = touch.timestamp
-            isFlicking = false
-            isGliding = false
-            isTrackpad = false
-            trackpadAccumX = 0
-            didRepeatBackspace = false
-            swipeDeleteTriggered = false
-            swipeDeleteLastX = pt.x
-            glidePoints = [normalizedPoint(pt)]
-            glideDisplayPoints = [pt]
-            visitedLetters.removeAll()
-
-            if case let .char(lower, _, _) = tv.spec.action {
-                visitedLetters.insert(lower)
-            }
-
-            triggerLightHaptic()
-            UIDevice.current.playInputClick()
-            refreshAllTiles()
-
-            switch tv.spec.action {
-            case let .char(lower, upper, _):
-                let shown = shiftState == .off ? lower : upper
-                popupView.showSingle(shown, over: tv.frame, in: bounds, theme: theme)
-                startLongPressTimer(for: tv)
-            case let .symbol(s):
-                popupView.showSingle(s, over: tv.frame, in: bounds, theme: theme)
-                startLongPressTimer(for: tv)
-            case .backspace:
-                backspaceRepeatTimer = Timer.scheduledTimer(withTimeInterval: 0.38, repeats: false) { [weak self] _ in
-                    Task { @MainActor in
-                        self?.beginBackspaceRepeat()
-                    }
-                }
-            case .globe:
-                if let event {
-                    onGlobePress?(tv, event)
-                }
-                resetActiveTouchState()
-            default:
-                break
-            }
+            handleTouchDown(
+                id: touchID(for: touch),
+                at: touch.location(in: self),
+                timestamp: touch.timestamp,
+                event: event
+            )
         }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = activeTouch, touches.contains(touch), let tv = startTile else { return }
-        let pt = touch.location(in: self)
+        for touch in touches {
+            handleTouchMove(
+                id: touchID(for: touch),
+                to: touch.location(in: self),
+                timestamp: touch.timestamp
+            )
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        for touch in touches {
+            handleTouchUp(
+                id: touchID(for: touch),
+                at: touch.location(in: self),
+                timestamp: touch.timestamp,
+                event: event
+            )
+        }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        for touch in touches {
+            handleTouchCancel(id: touchID(for: touch))
+        }
+    }
+
+    func handleTouchDown(id: UInt, at pt: CGPoint, timestamp: TimeInterval, event: UIEvent? = nil) {
+        guard let tv = tile(at: pt, applyBias: true) else { return }
+
+        if tv.spec.action == .shift && shiftHoldTouchID == nil {
+            shiftHoldTouchID = id
+            shiftBeforeTouch = shiftState
+            shiftHoldTypedAny = false
+            didCapsLockOnHold = false
+            if shiftState == .off {
+                shiftState = .once
+                onShiftChanged?(.once)
+            }
+            triggerLightHaptic()
+            UIDevice.current.playInputClick()
+            startShiftLongPressTimer()
+            refreshAllTiles()
+            return
+        }
+
+        if let prev = startTile, activeTouchID != nil, prev !== tv {
+            // Fast two-thumb rollover: commit previous tap cleanly with its real touch point.
+            let prevPoint = startPoint
+            commitActiveKey(startPoint: prevPoint, event: event)
+            resetActiveTouchState()
+        }
+
+        if shiftHoldTouchID != nil {
+            shiftHoldTypedAny = true
+            shiftLongPressTimer?.invalidate()
+            shiftLongPressTimer = nil
+        }
+
+        activeTouchID = id
+        startTile = tv
+        startPoint = pt
+        touchStartTime = timestamp
+        isFlicking = false
+        isGliding = false
+        isTrackpad = false
+        trackpadAccumX = 0
+        didRepeatBackspace = false
+        swipeDeleteTriggered = false
+        swipeDeleteLastX = pt.x
+        glidePoints = [normalizedPoint(pt)]
+        glideDisplayPoints = [pt]
+        visitedLetters.removeAll()
+
+        if case let .char(lower, _, _) = tv.spec.action {
+            visitedLetters.insert(lower)
+        }
+
+        triggerLightHaptic()
+        UIDevice.current.playInputClick()
+        refreshAllTiles()
+
+        switch tv.spec.action {
+        case let .char(lower, upper, _):
+            let shown = shiftState == .off ? lower : upper
+            popupView.showSingle(shown, over: tv.frame, in: bounds, theme: theme)
+            startLongPressTimer(for: tv)
+        case let .symbol(s):
+            popupView.showSingle(s, over: tv.frame, in: bounds, theme: theme)
+            startLongPressTimer(for: tv)
+        case .backspace:
+            backspaceRepeatTimer = Timer.scheduledTimer(withTimeInterval: 0.38, repeats: false) { [weak self] _ in
+                Task { @MainActor in
+                    self?.beginBackspaceRepeat()
+                }
+            }
+        case .globe:
+            if let event {
+                onGlobePress?(tv, event)
+            } else {
+                onGlobePress?(tv, UIEvent())
+            }
+            resetActiveTouchState()
+        default:
+            break
+        }
+    }
+
+    func handleTouchMove(id: UInt, to pt: CGPoint, timestamp: TimeInterval) {
+        guard id == activeTouchID, let tv = startTile else { return }
         let dx = pt.x - startPoint.x
         let dy = pt.y - startPoint.y
-        let elapsed = touch.timestamp - touchStartTime
+        let elapsed = timestamp - touchStartTime
 
         if !popupView.isHidden && popupView.currentSelectedOption != nil && longPressTimer == nil {
             _ = popupView.updateOptionSelection(touchX: pt.x, theme: theme)
@@ -897,14 +1011,14 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
         }
     }
 
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if let touch = activeTouch, touches.contains(touch) {
+    func handleTouchUp(id: UInt, at pt: CGPoint, timestamp: TimeInterval, event: UIEvent? = nil) {
+        if id == activeTouchID {
             let committedStart = startPoint
             commitActiveKey(startPoint: committedStart, event: event)
             resetActiveTouchState()
         }
 
-        if let sh = shiftHoldTouch, touches.contains(sh) {
+        if id == shiftHoldTouchID {
             shiftLongPressTimer?.invalidate()
             shiftLongPressTimer = nil
             if didCapsLockOnHold {
@@ -912,7 +1026,7 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
             } else if shiftHoldTypedAny {
                 shiftState = .off
             } else {
-                let now = ProcessInfo.processInfo.systemUptime
+                let now = timestamp > 0 ? timestamp : ProcessInfo.processInfo.systemUptime
                 if now - lastShiftTapTime < 0.32 && shiftBeforeTouch != .capsLock {
                     shiftState = .capsLock
                 } else if shiftBeforeTouch == .off {
@@ -922,7 +1036,7 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
                 }
                 lastShiftTapTime = now
             }
-            shiftHoldTouch = nil
+            shiftHoldTouchID = nil
             shiftHoldTypedAny = false
             didCapsLockOnHold = false
             onShiftChanged?(shiftState)
@@ -930,15 +1044,15 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
         }
     }
 
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if let touch = activeTouch, touches.contains(touch) {
+    func handleTouchCancel(id: UInt) {
+        if id == activeTouchID {
             resetActiveTouchState()
         }
-        if let sh = shiftHoldTouch, touches.contains(sh) {
+        if id == shiftHoldTouchID {
             shiftLongPressTimer?.invalidate()
             shiftLongPressTimer = nil
             shiftState = shiftBeforeTouch
-            shiftHoldTouch = nil
+            shiftHoldTouchID = nil
             shiftHoldTypedAny = false
             didCapsLockOnHold = false
             onShiftChanged?(shiftState)
@@ -957,7 +1071,7 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
             if glidePoints.count >= 2 {
                 onGlideComplete?(glidePoints)
             }
-            if shiftHoldTouch != nil {
+            if shiftHoldTouchID != nil {
                 shiftHoldTypedAny = true
                 shiftState = .once
                 onShiftChanged?(.once)
@@ -978,7 +1092,7 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
                 let text = shiftState == .off ? lower : upper
                 onTapCharacter?(text, normalizedPoint(startPoint))
             }
-            if shiftHoldTouch != nil {
+            if shiftHoldTouchID != nil {
                 shiftHoldTypedAny = true
                 shiftState = .once
                 onShiftChanged?(.once)
@@ -1021,7 +1135,7 @@ final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
         shiftLongPressTimer?.invalidate()
         shiftLongPressTimer = Timer.scheduledTimer(withTimeInterval: 0.36, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.shiftHoldTouch != nil, !self.shiftHoldTypedAny else { return }
+                guard let self, self.shiftHoldTouchID != nil, !self.shiftHoldTypedAny else { return }
                 self.didCapsLockOnHold = true
                 self.shiftState = .capsLock
                 self.onShiftChanged?(.capsLock)

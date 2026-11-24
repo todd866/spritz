@@ -79,7 +79,24 @@ final class InstrumentBarView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    var debugCandidateTitles: [String] {
+        candidateButtons.map { $0.title(for: .normal) ?? "" }
+    }
+
+    var debugCandidateFrames: [CGRect] {
+        candidateButtons.map { $0.frame }
+    }
+
+    var debugHasDuplicateEmojiButton: Bool {
+        predictStack.arrangedSubviews.contains { $0.accessibilityLabel == "Emoji keyboard" }
+    }
+
+    var debugVisibleDividerCount: Int {
+        [divider1, divider2].filter { !$0.isHidden && $0.bounds.width > 0 && $0.bounds.height > 0 }.count
+    }
+
     private func setupViews() {
+        accessibilityIdentifier = "spritz.instrumentBar"
         translatesAutoresizingMaskIntoConstraints = false
         heightAnchor.constraint(equalToConstant: Self.height).isActive = true
 

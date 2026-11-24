@@ -66,12 +66,41 @@ targets:
           - $(inherited)
           - "@executable_path/Frameworks"
           - "@executable_path/../../Frameworks"
+  SpritzMobileTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: SpritzMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(SPRITZ_IOS_BUNDLE_ID).Tests
+        GENERATE_INFOPLIST_FILE: YES
+  SpritzMobileUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: SpritzMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(SPRITZ_IOS_BUNDLE_ID).UITests
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   SpritzMobile:
     build:
       targets:
-        SpritzMobile: all
-        SpritzKeyboard: all
+        SpritzMobile: [run, test, profile, analyze, archive]
+        SpritzKeyboard: [run, test, profile, analyze, archive]
+        SpritzMobileTests: [test]
+        SpritzMobileUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - SpritzMobileTests
+        - SpritzMobileUITests
     archive:
       config: Release
   SpritzKeyboard:

@@ -56,7 +56,14 @@ final class SpritzKeyboardContainerView: UIView {
         Self.preferredHeight(numberRow: config.numberRow)
     }
 
+    var debugDeckView: KeyboardDeckView { deckView }
+    var debugInstrumentBar: InstrumentBarView { instrumentBar }
+    var debugHeightConstraintPriority: UILayoutPriority { heightConstraint.priority }
+    var debugLastOutput: KeyboardOutputDTO? { lastOutput }
+    var debugIsEmojiGridVisible: Bool { isEmojiGridVisible }
+
     private func setupHierarchy() {
+        accessibilityIdentifier = "spritz.keyboardContainer"
         translatesAutoresizingMaskIntoConstraints = false
         clipsToBounds = false
         heightConstraint = heightAnchor.constraint(equalToConstant: totalHeight)

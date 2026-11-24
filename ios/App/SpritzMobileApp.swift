@@ -152,6 +152,7 @@ private struct KeyboardTabView: View {
             }
             .pickerStyle(.segmented)
             .frame(width: 126)
+            .accessibilityIdentifier("spritz.inputModePicker")
             Button {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
@@ -192,6 +193,7 @@ private struct KeyboardTabView: View {
                 }
                 .padding(18)
                 .accessibilityLabel("Clear test pad")
+                .accessibilityIdentifier("spritz.clearPad")
             }
         }
         .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -265,6 +267,7 @@ private struct TypingTabView: View {
                     Text("\(model.lexiconWordCount.formatted()) · \(model.config.personalWords.count) learned")
                         .font(.subheadline.monospacedDigit())
                         .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("spritz.lexiconCount")
                 }
                 .frame(height: 36)
             }
@@ -526,6 +529,7 @@ private struct TestPadRepresentable: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
+        tv.accessibilityIdentifier = "spritz.testPad"
         tv.backgroundColor = .clear
         tv.font = .systemFont(ofSize: 16.5)
         tv.textColor = isDark ? .white : .label
@@ -596,6 +600,7 @@ private struct EmbeddedDeckRepresentable: UIViewRepresentable {
         init(deck: SpritzKeyboardContainerView) {
             self.deck = deck
             super.init(frame: .zero)
+            accessibilityIdentifier = "spritz.embeddedDeck"
             clipsToBounds = false
             deck.translatesAutoresizingMaskIntoConstraints = false
             deck.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
