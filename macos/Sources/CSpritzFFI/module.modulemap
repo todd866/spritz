@@ -1,0 +1,4 @@
+module CSpritzFFI {
+    header "include/spritz_ffi.h"
+    export *
+}
