@@ -3,6 +3,7 @@ name = "spritz-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

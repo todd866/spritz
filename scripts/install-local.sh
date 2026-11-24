@@ -5,9 +5,16 @@ export PATH="$HOME/.cargo/bin:$PATH"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-SIGN_IDENTITY="${SPRITZ_SIGN_IDENTITY:-Developer ID Application: Ian Todd (U87MQBZKJ5)}"
+if [[ -n "${SPRITZ_SIGN_IDENTITY:-}" ]]; then
+  SIGN_IDENTITY="$SPRITZ_SIGN_IDENTITY"
+else
+  SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1 || true)"
+  if [[ -z "$SIGN_IDENTITY" ]]; then
+    SIGN_IDENTITY="-"
+  fi
+fi
 DEST="/Applications/Spritz.app"
-ROLLBACK_DIR="$HOME/.local/state/spritz/rollback-swift-20261124"
+BACKUP_DIR="$HOME/.local/state/spritz/previous-app"
 
 SKIP_BUILD="${SPRITZ_SKIP_BUILD:-0}"
 if [[ "${1:-}" == "--skip-build" ]]; then
@@ -15,22 +22,23 @@ if [[ "${1:-}" == "--skip-build" ]]; then
 fi
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
-  if [[ "${SPRITZ_NO_HEAVY_SLOT:-0}" != "1" ]] && command -v heavy-slot >/dev/null; then
-    HEAVY_SLOT_LOCAL=1 heavy-slot -- "$REPO_ROOT/scripts/build.sh" --release
-  else
-    "$REPO_ROOT/scripts/build.sh" --release
-  fi
+  "$REPO_ROOT/scripts/build.sh" --release
 fi
 
 APP_PATH="$REPO_ROOT/target/bundle-release/Spritz.app"
-codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime \
-  --entitlements "$REPO_ROOT/macos/Resources/Spritz.entitlements" "$APP_PATH"
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  codesign --force --sign - \
+    --entitlements "$REPO_ROOT/macos/Resources/Spritz.entitlements" "$APP_PATH"
+else
+  codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime \
+    --entitlements "$REPO_ROOT/macos/Resources/Spritz.entitlements" "$APP_PATH"
+fi
 codesign --verify --deep --strict "$APP_PATH"
 
-if [[ -d "$DEST" && ! -d "$ROLLBACK_DIR/Spritz.app" ]]; then
-  mkdir -p "$ROLLBACK_DIR"
-  ditto "$DEST" "$ROLLBACK_DIR/Spritz.app"
-  echo "Backed up existing Spritz.app to $ROLLBACK_DIR/Spritz.app"
+if [[ -d "$DEST" && ! -d "$BACKUP_DIR/Spritz.app" ]]; then
+  mkdir -p "$BACKUP_DIR"
+  ditto "$DEST" "$BACKUP_DIR/Spritz.app"
+  echo "Backed up existing Spritz.app to $BACKUP_DIR/Spritz.app"
 fi
 
 pkill -x Spritz || true
