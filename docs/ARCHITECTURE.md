@@ -3,38 +3,40 @@
 ## 1. Crate & App Split
 
 ```text
-+---------------------------------------------------------------+
-| SwiftUI + AppKit Shell (macos/Sources/SpritzApp)              |
-|  - PickerPanel (non-activating NSPanel, NSGlassEffectView)    |
-|  - PickerView & DictationSwapStrip (10-col slots, 7-col grid) |
-|  - MenuBarController & compact SettingsView                   |
-|  - TouchBar DistributedNotificationCenter + SMAppService       |
-+------------------------------+--------------------------------+
-                               | C-ABI (spritz_ffi.h)
-+------------------------------v--------------------------------+
-| spritz-macos (crates/spritz-macos -> libspritz_macos.a)       |
-|  - EventTap (CGEventTap KeyDown | FlagsChanged, FnGesture)    |
-|  - AXObserver + FocusedElementCache + live async AX refresh   |
-|  - CaretLocator (kAXBoundsForRange -> element -> window)      |
-|  - TextInserter (chunked <= 20 UTF-16 units, SYNTH_MARKER)    |
-|  - NativeDictationCapture + AgyRefinementRunner               |
-|  - SecureInput (IOKit kCGSSessionSecureInputPID)              |
-+------------------------------+--------------------------------+
-                               | Pure Rust API
-+------------------------------v--------------------------------+
-| spritz-core (crates/spritz-core -> portable rlib/staticlib)   |
-|  - EmojiDatabase (embedded emojibase-en.json, FE0F-agnostic)  |
-|  - Fuzzy search (fzy scorer + stemmer + usage boost)          |
-|  - PickerModel (1-0, a-z mnemonics, drag ops, categories)     |
-|  - ContextMatcher, FnGesture, UnicodeChunker, RecentTyping    |
-|  - VoiceBackend trait + DictationState + DictationReceipt     |
-|  - TouchBarState schema v1, LocalTelemetry, Config & State    |
-+---------------------------------------------------------------+
++----------------------------------+   +-----------------------------------+
+| macOS App (macos/Sources)        |   | iOS App & Extension (ios/)        |
+|  - PickerPanel (NSGlassEffect)   |   |  - SpritzKeyboard (UIInputView)   |
+|  - PickerView & DictationStrip   |   |  - KeyboardDeckView (UIKit touch) |
+|  - MenuBarController & Settings  |   |  - InstrumentBar + EmojiDeckView  |
+|  - TouchBar IPC + SMAppService   |   |  - SpritzMobile (3-tab host UI)   |
++----------------+-----------------+   +-----------------+-----------------+
+                 | C-ABI (spritz_ffi.h)                  | C-ABI (spritz_ios_ffi.h)
++----------------v-----------------+   +-----------------v-----------------+
+| spritz-macos (libspritz_macos.a) |   | spritz-ios (SpritzCore.xcframework)|
+|  - CGEventTap & FnGesture        |   |  - KeyboardSession FFI bridge     |
+|  - AXObserver & CaretLocator     |   |  - Glide & candidate state cache  |
+|  - Chunked CGEvent Inserter      |   |  - Emoji snapshot/pick/pin FFI    |
+|  - SecureInput & TouchBar I/O    |   |  - Mtime-synced App Group storage |
+|  - NativeDictation & AgyRunner   |   +-----------------+-----------------+
++----------------+-----------------+                     |
+                 |               Pure Rust API           |
+                 +-------------------+-------------------+
+                                     |
++------------------------------------v-------------------------------------+
+| spritz-core (crates/spritz-core -> portable rlib/staticlib)              |
+|  - EmojiDatabase (emojibase-en.json) & Fuzzy Search (fzy + stemmer)      |
+|  - PickerModel (1-0, a-z mnemonics, drag ops) & ContextMatcher           |
+|  - keyboard.rs: QwertyGeometry, 22k MIT Lexicon, Spatial Autocorrect,    |
+|    AU/UK/US Variants, Glide Decoder, Bigrams, Snippets, 1-Tap Undo       |
+|  - FnGesture, UnicodeChunker, VoiceBackend Trait, Telemetry, Config      |
++--------------------------------------------------------------------------+
 ```
 
-## 2. iOS Keyboard & Shadow-First Voice Roadmap
+## 2. iOS Implementation Notes
 
-Because `crates/spritz-core` has zero `AppKit`, `Carbon`, `CGEvent`, or filesystem daemon dependencies, the same C-ABI pattern (`spritz-core` -> small platform wrapper crate) extends directly to an iOS `UIInputViewController` custom keyboard extension:
+- **Zero-Allocation Shared Engine (`crates/spritz-core::keyboard`):** Embeds a frequency-ranked 22,229-word MIT English lexicon (`crates/spritz-core/data/lexicon-en.txt`, derived from `hermitdave/FrequencyWords` plus curated AU/UK, clinical, developer, and contraction overlays) alongside endpoint-bucketed glide candidate filtering and QWERTY touch-coordinate spatial weighting.
+- **Thin UIKit Extension (`ios/Keyboard/KeyboardViewController.swift` + `ios/Shared/`):** Runs `KeyboardDeckView` with direct `UIView` touch events (`touchesBegan`/`Moved`/`Ended`) for zero-latency key popups, flick-down secondary symbols, long-press accents, smooth `CAShapeLayer` glide trails, spacebar caret trackpad, left-swipe word deletion, an inline `38 pt` editing bar, and full Emojibase v16 search/grids. Config and pinned emoji state share cleanly with `SpritzMobile` via App Group storage (`group.io.github.todd866.SpritzMobile`, falling back to Application Support when unavailable).
 
-- **iOS Keyboard Target (`crates/spritz-ios`):** Expose `EmojiDatabase`, fuzzy search, `PickerModel`, skin tone selection, and `LocalTelemetry` to Swift via an `ios-staticlib` XCFramework. `UIInputViewController.textDocumentProxy` implements text insertion (`insertText`) and surrounding context (`documentContextBeforeInput`), feeding `context::match_context` for Suggested emojis just like AX does on macOS.
-- **Shadow-First `VoiceBackend` Trait:** Defined in `spritz_core::dictation::VoiceBackend`. Today macOS runs `VoiceMode::ChatGptPassthrough`, leaving physical `Fn` holds untouched so ChatGPT/Codex remains the active dictation path while Spritz observes field diffs into `DictationState`. Future backends (e.g., on-device Whisper/CoreML or cloud streaming in shadow comparison mode, and iOS Full-Access mic capture inside the keyboard's container/extension) implement `VoiceBackend` and surface shadow candidates alongside the primary transcript inside `DictationSwapStrip` without interrupting the active dictation workflow.
+## 3. Shadow-First `VoiceBackend` Roadmap
+
+- **Shadow-First `VoiceBackend` Trait:** Defined in `spritz_core::dictation::VoiceBackend`. On macOS, `VoiceMode::ChatGptPassthrough` leaves physical `Fn` holds untouched so ChatGPT/Codex remains the active dictation path while Spritz observes settled diffs into `DictationState` and surfaces optional reviewed alternatives in `DictationSwapStrip`. Future on-device voice backends on both macOS and iOS implement `VoiceBackend` without altering the core UI shell contract.

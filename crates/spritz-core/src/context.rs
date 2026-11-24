@@ -6,6 +6,10 @@ const STOP_WORDS: &[&str] = &[
     "the", "and", "for", "with", "that", "this", "from", "have", "your", "you", "are", "was",
     "but", "not", "just", "like", "can", "will", "would", "about", "into", "then", "than",
     "what", "when", "where", "how", "why", "its", "it",
+    "my", "on", "in", "at", "to", "so", "up", "is", "be", "do", "or", "by", "as", "of", "me",
+    "we", "he", "us", "no", "if", "an", "am", "id", "go", "im", "don", "dont", "cant", "wont",
+    "our", "his", "her", "she", "they", "them", "their", "been", "were", "has", "had", "did",
+    "all", "any", "out", "now", "too", "way", "very", "much", "here", "there", "soon",
 ];
 
 /// Local keyword matching against shortcodes, label words, and tags.
@@ -36,7 +40,20 @@ pub fn match_context(
         .enumerate()
         .filter_map(|(idx, emoji)| {
             let fields = &db.context_words[idx];
-            let score = words.iter().filter(|w| fields.contains(*w)).count();
+            let mut score = 0usize;
+            for w in &words {
+                if emoji.group == 9 && w.len() < 3 {
+                    continue;
+                }
+                if fields.contains(w) {
+                    score += 1;
+                    if emoji.shortcodes.iter().any(|s| s == w) {
+                        score += 3;
+                    } else if tokenize_words(&emoji.label).iter().any(|l| l == w) {
+                        score += 2;
+                    }
+                }
+            }
             if score == 0 {
                 return None;
             }
@@ -79,5 +96,18 @@ mod tests {
         assert!(hits.iter().any(|&i| db.all[i].hexcode == "2708" || db.all[i].shortcodes.iter().any(|s| s.contains("airplane"))));
         assert!(match_context(db, Some("the and for with"), &usage).is_empty());
         assert!(match_context(db, None, &usage).is_empty());
+
+        let coffee_hits = match_context(
+            db,
+            Some("Grabbing coffee soon, don't worry about the colour — I'm on my way teh"),
+            &usage,
+        );
+        assert_eq!(
+            coffee_hits.first().map(|&i| db.all[i].hexcode.as_str()),
+            Some("2615"),
+            "expected hot beverage (2615) first, got {:?}",
+            coffee_hits.iter().map(|&i| (&db.all[i].hexcode, &db.all[i].character)).collect::<Vec<_>>()
+        );
+        assert!(!coffee_hits.iter().any(|&i| db.all[i].hexcode == "1F1F2-1F1FE"));
     }
 }

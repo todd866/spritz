@@ -5,6 +5,7 @@ pub mod dictation;
 pub mod emoji;
 pub mod fn_gesture;
 pub mod insertion;
+pub mod keyboard;
 pub mod search;
 pub mod slots;
 pub mod telemetry;

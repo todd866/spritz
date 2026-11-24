@@ -1,0 +1,7 @@
+// Public defaults; override locally in ~/.config/spritz/ios-private.xcconfig
+DEVELOPMENT_TEAM =
+SPRITZ_IOS_BUNDLE_ID = io.github.todd866.SpritzMobile
+SPRITZ_IOS_KEYBOARD_BUNDLE_ID = io.github.todd866.SpritzMobile.Keyboard
+SPRITZ_IOS_APP_GROUP = group.io.github.todd866.SpritzMobile
+
+#include? "../../../../.config/spritz/ios-private.xcconfig"

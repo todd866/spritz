@@ -123,6 +123,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spritz-ios"
+version = "0.5.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spritz-core",
+]
+
+[[package]]
 name = "spritz-macos"
 version = "0.5.0"
 dependencies = [

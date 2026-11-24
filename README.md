@@ -52,7 +52,45 @@ Clean-room native Rust + SwiftUI/AppKit keyboard-first emoji picker for macOS. ~
 
 Signed and notarized macOS builds (`Spritz-0.5.0.dmg`, Apple Silicon, macOS 14+) are available on [GitHub Releases](https://github.com/todd866/spritz/releases/latest).
 
-## Build & Install
+## Spritz for iOS
+
+Spritz also ships a clean-room iPhone custom keyboard extension (`SpritzKeyboard`) and companion host app (`SpritzMobile`) powered by the exact same Rust core crate (`crates/spritz-core`):
+
+<table>
+  <tr>
+    <th>Light</th>
+    <th>Dark</th>
+    <th>Editing Bar</th>
+    <th>Emoji Mode</th>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/ios-keyboard-light.png" alt="Spritz iOS keyboard in light mode" width="180"></td>
+    <td><img src="docs/screenshots/ios-keyboard-dark.png" alt="Spritz iOS keyboard in dark mode" width="180"></td>
+    <td><img src="docs/screenshots/ios-tools-dark.png" alt="Spritz iOS editing instrument bar" width="180"></td>
+    <td><img src="docs/screenshots/ios-emoji-dark.png" alt="Spritz iOS emoji mode" width="180"></td>
+  </tr>
+</table>
+
+- **Ergonomic deck & number row:** Direct UIKit touch handling (`touchesBegan`/`touchesMoved`) with multi-touch rollover, an optional compact `1`–`0` top row, downward flick secondary symbols (`! @ # $ % ...`), and long-press accent/alternate popups (`e` → `é è ê ë €`, `.` → `.com .au`).
+- **Touch-coordinate spatial autocorrect & 1-tap Backspace undo:** Ranked across a 22,229-word on-device lexicon (`FrequencyWords` MIT + Australian/UK, clinical, developer, and contraction overlays) with AU/UK/US spelling protection (`colour`, `dyspnoea`, `oedema` are never "corrected" to US). Pressing `⌫` immediately after an auto-correction reverts your literal word and adds it to rejected corrections so it won't hijack you twice.
+- **Sub-millisecond Rust glide typing:** Endpoint-indexed polyline decoder runs in process with smart trailing punctuation handling.
+- **Gestures & editing instrument bar:** Horizontal spacebar drag moves the cursor character-by-character; swiping left from `⌫` deletes the previous word with an instant `↺` Undo pill. Toggle the compact `38 pt` instrument bar (`← → Sel ↶ Copy Paste Snips`) for fast cursor control, clipboard ops, and `/` text snippets (`/shrug`, `/check`, `/arrow`).
+- **Inline Emoji Mode with live search & context hints:** Surfaces context-matched emoji pills right in the candidate bar (`☕` when typing about coffee), plus `Suggested`, `Pinned (1–0)`, `Recent`, and `All` grids with `fzy` search over QWERTY.
+- **100% on-device privacy:** Zero keystroke logging, zero telemetry upload, and works completely offline even with **Allow Full Access** turned off (Full Access is only used by the optional Paste button).
+
+### Build for iOS
+
+Requires Xcode (iOS 17+ SDK), [`xcodegen`](https://github.com/yonaskolb/XcodeGen), and the Rust iOS targets:
+
+```sh
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+./scripts/build-ios-core.sh
+xcodegen generate --spec ios/project.yml --project ios
+```
+
+Open `ios/SpritzMobile.xcodeproj` or build via `xcodebuild`. Personal signing team IDs stay out of version control by putting `DEVELOPMENT_TEAM = YOUR_TEAM_ID` in `~/.config/spritz/ios-private.xcconfig` (automatically included if present by [`ios/Config/Base.xcconfig`](ios/Config/Base.xcconfig)).
+
+## Build & Install (macOS)
 
 ### Requirements
 
@@ -112,17 +150,19 @@ python3 scripts/migrate_prefs.py --dry-run
 python3 scripts/migrate_prefs.py
 ```
 
-## Architecture & Roadmap
+## Architecture
 
 | Component | Responsibility |
 | --- | --- |
-| [`crates/spritz-core`](crates/spritz-core) | Pure Rust library with zero OS/AppKit dependencies: Emojibase catalog, `fzy` fuzzy search, `1`–`0` & `a`–`z` slot model, context matcher, `FnGesture` state machine, UTF-16 chunker, `VoiceBackend` trait, Touch Bar policy/state, local telemetry, config/state persistence |
+| [`crates/spritz-core`](crates/spritz-core) | Pure Rust library with zero OS/UIKit/AppKit dependencies: Emojibase v16 catalog, `fzy` fuzzy search, `1`–`0` & `a`–`z` slot model, context matcher, spatial QWERTY keyboard engine (`keyboard.rs`), 22k MIT lexicon, glide decoder, `FnGesture` state machine, UTF-16 chunker, `VoiceBackend` trait, Touch Bar policy/state, local telemetry, config/state persistence |
 | [`crates/spritz-macos`](crates/spritz-macos) | macOS platform I/O staticlib exposing C-ABI (`spritz_ffi.h`): `CGEventTap`, `AXObserver` + async AX cache, caret locator, chunked `CGEvent` Unicode inserter, Secure Input detector, dictation diff capture, Touch Bar state I/O |
+| [`crates/spritz-ios`](crates/spritz-ios) | iOS staticlib (`SpritzCore.xcframework`) exposing C-ABI (`spritz_ios_ffi.h`) for key taps, spatial autocorrect, glide decoding, snippets, skin-tone-aware emoji search/pinning, and App Group state sync |
 | [`macos`](macos) | Thin SwiftUI + AppKit shell (`NonActivatingPanel`, Liquid Glass chrome, menu bar item, compact settings, Touch Bar listener, `SMAppService`) |
+| [`ios`](ios) | `SpritzKeyboard` (`UIInputViewController` UIKit touch deck, flick hints, accents, glide trail, spacebar trackpad, editing bar, emoji grid) and 3-tab `SpritzMobile` host app |
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for module details and how the OS-agnostic `spritz-core` crate and shadow-first `VoiceBackend` trait extend cleanly to a future iOS keyboard target (`spritz-ios`).
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for module details and how the OS-agnostic `spritz-core` crate and shadow-first `VoiceBackend` trait work across both macOS and iOS.
 
 ## License & Third-Party Notices
 
 - Code: [MIT License](LICENSE)
-- Bundled emoji catalog & Rust crate attributions: [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) (powered by MIT-licensed `emojibase-data` v16)
+- Bundled emoji catalog (`emojibase-data` v16), English lexicon (`hermitdave/FrequencyWords`), and Rust crate attributions: [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)

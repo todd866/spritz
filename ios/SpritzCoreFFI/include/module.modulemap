@@ -1,0 +1,4 @@
+module SpritzCoreFFI {
+    header "spritz_ios_ffi.h"
+    export *
+}

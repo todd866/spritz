@@ -1,5 +1,7 @@
 target/
 macos/.build/
+ios/Frameworks/
+ios/SpritzMobile.xcodeproj/
 .DS_Store
 *.app/
 !macos/Resources/

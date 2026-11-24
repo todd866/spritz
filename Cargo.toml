@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/spritz-core",
+    "crates/spritz-ios",
     "crates/spritz-macos",
 ]
 
