@@ -223,6 +223,7 @@ final class SpritzBridge: ObservableObject {
         installObservers()
         seedInitialWorkspaceState()
         reloadSnapshot()
+        schedulePermissionPoll()
         if let engine {
             spritz_publish_touchbar(engine, true)
         }
@@ -257,8 +258,12 @@ final class SpritzBridge: ObservableObject {
     func reloadSnapshot() {
         guard let engine else { return }
         if let next = Self.decodeSnapshot(ptr: spritz_snapshot_json(engine)) {
+            let permsChanged = next.allPermissionsGranted != snapshot.allPermissionsGranted
             snapshot = next
             onStateUpdated?(next)
+            if permsChanged {
+                schedulePermissionPoll()
+            }
         }
     }
 
@@ -438,7 +443,11 @@ final class SpritzBridge: ObservableObject {
         }
         workspaceObservers.append(
             NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshLoginStatus(force: true) }
+                MainActor.assumeIsolated {
+                    self?.refreshLoginStatus(force: true)
+                    self?.pollPermissions()
+                    self?.schedulePermissionPoll()
+                }
             }
         )
 
@@ -463,13 +472,23 @@ final class SpritzBridge: ObservableObject {
         hb.tolerance = 1.0
         heartbeatTimer = hb
 
-        let pt = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+        schedulePermissionPoll()
+    }
+
+    private func schedulePermissionPoll() {
+        permissionTimer?.invalidate()
+        permissionTimer = nil
+        guard engine != nil else { return }
+        let healthy = snapshot.allPermissionsGranted
+        let interval: TimeInterval = healthy ? 30.0 : 3.0
+        let pt = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, let engine = self.engine else { return }
                 spritz_poll_permissions(engine)
+                self.schedulePermissionPoll()
             }
         }
-        pt.tolerance = 1.0
+        pt.tolerance = healthy ? 5.0 : 0.5
         permissionTimer = pt
     }
 

@@ -48,6 +48,10 @@ Clean-room native Rust + SwiftUI/AppKit keyboard-first emoji picker for macOS. ~
 | `Tab` / `Shift+Tab` (strip active) · `Fn+Tab` | Cycle dictation alternatives; press `Return` or **Use** to apply |
 | Drag & drop | Drop an emoji onto a `1`–`0` or `a`–`z` slot to assign/swap; drag out to unbind |
 
+## Download
+
+Signed and notarized macOS builds (`Spritz-0.5.0.dmg`, Apple Silicon, macOS 14+) are available on [GitHub Releases](https://github.com/todd866/spritz/releases/latest).
+
 ## Build & Install
 
 ### Requirements
