@@ -8,6 +8,8 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        inputView?.allowsSelfSizing = true
+        view.backgroundColor = .clear
 
         let container = SpritzKeyboardContainerView(bridge: bridge, needsGlobe: needsInputModeSwitchKey)
         container.target = proxyTarget
@@ -37,7 +39,7 @@ final class KeyboardViewController: UIInputViewController {
 
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
-        containerView?.refreshContext()
+        containerView?.handleExternalTextDidChange()
         applyAppearance()
     }
 

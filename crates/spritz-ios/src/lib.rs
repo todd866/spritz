@@ -3,7 +3,7 @@ use spritz_core::config::{write_atomic_0600, SpritzState};
 use spritz_core::context::match_context;
 use spritz_core::db::EmojiDatabase;
 use spritz_core::emoji::{canonical_hex, EmojiCategory};
-use spritz_core::keyboard::{CandidateItem, KeyboardConfig, KeyboardSession, ShiftState};
+use spritz_core::keyboard::{CandidateItem, KeyboardConfig, KeyboardSession, Lexicon, ShiftState};
 use spritz_core::search::search_emojis;
 use spritz_core::slots::NUMBER_SLOT_COUNT;
 use std::collections::HashSet;
@@ -360,12 +360,18 @@ pub extern "C" fn spritz_ios_free_cstr(ptr: *mut c_char) {
 }
 
 #[no_mangle]
+pub extern "C" fn spritz_ios_lexicon_count() -> usize {
+    Lexicon::global().words.len()
+}
+
+#[no_mangle]
 pub extern "C" fn spritz_ios_tap_key(
     engine: *mut SpritzIosEngine,
     ch: *const c_char,
     x: f32,
     y: f32,
     context_before: *const c_char,
+    system_known: bool,
 ) -> *mut c_char {
     let Some(eng) = (unsafe { engine.as_mut() }) else {
         return into_c_string("{}".to_string());
@@ -377,12 +383,12 @@ pub extern "C" fn spritz_ios_tap_key(
     let Some(key_ch) = key_str.chars().next() else {
         let out = eng
             .session
-            .sync_context(Some(&ctx), eng.db, &eng.state.usage_counts);
+            .sync_context_checked(Some(&ctx), system_known, eng.db, &eng.state.usage_counts);
         return serialize_output(eng, out);
     };
     let out = eng
         .session
-        .tap_key(key_ch, x, y, Some(&ctx), eng.db, &eng.state.usage_counts);
+        .tap_key_checked(key_ch, x, y, Some(&ctx), system_known, eng.db, &eng.state.usage_counts);
     serialize_output(eng, out)
 }
 
@@ -409,6 +415,7 @@ pub extern "C" fn spritz_ios_insert_direct(
 pub extern "C" fn spritz_ios_tap_space(
     engine: *mut SpritzIosEngine,
     context_before: *const c_char,
+    system_known: bool,
 ) -> *mut c_char {
     let Some(eng) = (unsafe { engine.as_mut() }) else {
         return into_c_string("{}".to_string());
@@ -418,7 +425,7 @@ pub extern "C" fn spritz_ios_tap_space(
     eng.last_context_before = ctx.clone();
     let out = eng
         .session
-        .tap_space(Some(&ctx), eng.db, &eng.state.usage_counts);
+        .tap_space_checked(Some(&ctx), system_known, eng.db, &eng.state.usage_counts);
     serialize_output(eng, out)
 }
 
@@ -426,6 +433,7 @@ pub extern "C" fn spritz_ios_tap_space(
 pub extern "C" fn spritz_ios_tap_return(
     engine: *mut SpritzIosEngine,
     context_before: *const c_char,
+    system_known: bool,
 ) -> *mut c_char {
     let Some(eng) = (unsafe { engine.as_mut() }) else {
         return into_c_string("{}".to_string());
@@ -435,7 +443,7 @@ pub extern "C" fn spritz_ios_tap_return(
     eng.last_context_before = ctx.clone();
     let out = eng
         .session
-        .tap_return(Some(&ctx), eng.db, &eng.state.usage_counts);
+        .tap_return_checked(Some(&ctx), system_known, eng.db, &eng.state.usage_counts);
     serialize_output(eng, out)
 }
 
@@ -555,6 +563,7 @@ pub extern "C" fn spritz_ios_set_shift(engine: *mut SpritzIosEngine, state: i32)
 pub extern "C" fn spritz_ios_sync_context(
     engine: *mut SpritzIosEngine,
     context_before: *const c_char,
+    system_known: bool,
 ) -> *mut c_char {
     let Some(eng) = (unsafe { engine.as_mut() }) else {
         return into_c_string("{}".to_string());
@@ -564,7 +573,7 @@ pub extern "C" fn spritz_ios_sync_context(
     eng.last_context_before = ctx.clone();
     let out = eng
         .session
-        .sync_context(Some(&ctx), eng.db, &eng.state.usage_counts);
+        .sync_context_checked(Some(&ctx), system_known, eng.db, &eng.state.usage_counts);
     serialize_output(eng, out)
 }
 
@@ -756,15 +765,24 @@ mod tests {
             let eng = spritz_ios_create(dir_c.as_ptr(), dir_c.as_ptr());
             assert!(!eng.is_null());
 
+            assert!(spritz_ios_lexicon_count() > 20_000);
+
             spritz_ios_set_shift(eng, 0);
             let k = CString::new("t").unwrap();
             let ctx = CString::new("").unwrap();
-            let r1 = take_str(spritz_ios_tap_key(eng, k.as_ptr(), 0.45, 0.16, ctx.as_ptr()));
+            let r1 = take_str(spritz_ios_tap_key(eng, k.as_ptr(), 0.45, 0.16, ctx.as_ptr(), false));
             assert!(r1.contains(r#""insert":"t""#));
 
             let ctx2 = CString::new("teh").unwrap();
-            let sp = take_str(spritz_ios_tap_space(eng, ctx2.as_ptr()));
+            let sp = take_str(spritz_ios_tap_space(eng, ctx2.as_ptr(), false));
             assert!(sp.contains(r#""insert":"the ""#));
+
+            let ret_ctx = CString::new("teh").unwrap();
+            let ret = take_str(spritz_ios_tap_return(eng, ret_ctx.as_ptr(), false));
+            assert!(ret.contains(r#""insert":"the\n""#));
+
+            let sync = take_str(spritz_ios_sync_context(eng, ctx.as_ptr(), false));
+            assert!(sync.contains("shiftState"));
 
             let mode = CString::new("pinned").unwrap();
             let q = CString::new("fire").unwrap();

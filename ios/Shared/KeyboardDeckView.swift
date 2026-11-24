@@ -31,18 +31,19 @@ private final class KeyTileView: UIView {
     private let mainLabel = UILabel()
     private let flickLabel = UILabel()
     private let iconView = UIImageView()
-    private let shadowLayer = CALayer()
+    private var isLowercaseLetter = false
 
     init(spec: KeySpec) {
         self.spec = spec
         super.init(frame: .zero)
         isUserInteractionEnabled = false
 
-        shadowLayer.cornerRadius = 6.5
-        layer.insertSublayer(shadowLayer, at: 0)
-
         layer.cornerRadius = 6.5
         layer.borderWidth = 1.0 / UIScreen.main.scale
+        layer.masksToBounds = false
+        layer.shadowOffset = CGSize(width: 0, height: 1)
+        layer.shadowRadius = 0
+        layer.shadowOpacity = 1
 
         mainLabel.textAlignment = .center
         mainLabel.adjustsFontSizeToFitWidth = true
@@ -50,7 +51,7 @@ private final class KeyTileView: UIView {
         addSubview(mainLabel)
 
         flickLabel.textAlignment = .right
-        flickLabel.font = .systemFont(ofSize: 9.5, weight: .medium)
+        flickLabel.font = .systemFont(ofSize: 9.0, weight: .medium)
         addSubview(flickLabel)
 
         iconView.contentMode = .scaleAspectFit
@@ -63,9 +64,9 @@ private final class KeyTileView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        shadowLayer.frame = CGRect(x: 0, y: 1, width: bounds.width, height: bounds.height)
-        mainLabel.frame = bounds
-        flickLabel.frame = CGRect(x: bounds.width - 15, y: 2.5, width: 11.5, height: 11)
+        layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: 6.5).cgPath
+        mainLabel.frame = isLowercaseLetter ? bounds.offsetBy(dx: 0, dy: -1.5) : bounds
+        flickLabel.frame = CGRect(x: bounds.width - 14, y: 2.5, width: 10.5, height: 11)
         let iconSide: CGFloat = min(19, bounds.height * 0.44)
         iconView.frame = CGRect(
             x: (bounds.width - iconSide) * 0.5,
@@ -80,25 +81,37 @@ private final class KeyTileView: UIView {
         shift: ShiftStateDTO,
         showFlicks: Bool,
         returnType: UIReturnKeyType,
-        pressed: Bool
+        pressed: Bool,
+        trackpadActive: Bool
     ) {
-        shadowLayer.backgroundColor = theme.keyShadow.cgColor
+        layer.shadowColor = theme.keyShadow.cgColor
         layer.borderColor = theme.keyBorder.cgColor
 
         flickLabel.isHidden = true
         iconView.isHidden = true
         mainLabel.isHidden = false
 
+        let isSpace: Bool
+        if case .space = spec.action { isSpace = true } else { isSpace = false }
+        let dimAlpha: CGFloat = (trackpadActive && !isSpace) ? 0.28 : 1.0
+        mainLabel.alpha = dimAlpha
+        flickLabel.alpha = dimAlpha
+        iconView.alpha = dimAlpha
+
+        let wasLower = isLowercaseLetter
+        isLowercaseLetter = false
+
         switch spec.action {
         case let .char(lower, upper, flick):
             let shifted = shift != .off
+            isLowercaseLetter = !shifted
             mainLabel.text = shifted ? upper : lower
-            mainLabel.font = .systemFont(ofSize: 22, weight: .regular)
+            mainLabel.font = .systemFont(ofSize: shifted ? 22.0 : 24.5, weight: .regular)
             mainLabel.textColor = theme.primaryInk
             backgroundColor = pressed ? theme.letterKeyPressed : theme.letterKeyFill
             if showFlicks, let flick {
                 flickLabel.text = flick
-                flickLabel.textColor = theme.secondaryInk.withAlphaComponent(0.82)
+                flickLabel.textColor = theme.secondaryInk.withAlphaComponent(0.58)
                 flickLabel.isHidden = false
             }
 
@@ -153,9 +166,9 @@ private final class KeyTileView: UIView {
             backgroundColor = pressed ? theme.utilityKeyPressed : theme.utilityKeyFill
 
         case .space:
-            mainLabel.text = "Spritz"
-            mainLabel.font = .systemFont(ofSize: 14, weight: .regular)
-            mainLabel.textColor = theme.secondaryInk
+            mainLabel.text = trackpadActive ? "◀  trackpad  ▶" : "Spritz"
+            mainLabel.font = .systemFont(ofSize: trackpadActive ? 13 : 14, weight: trackpadActive ? .medium : .regular)
+            mainLabel.textColor = trackpadActive ? theme.accentFill : theme.secondaryInk
             backgroundColor = pressed ? theme.letterKeyPressed : theme.letterKeyFill
 
         case .returnKey:
@@ -174,6 +187,10 @@ private final class KeyTileView: UIView {
                 iconView.tintColor = theme.primaryInk
                 backgroundColor = pressed ? theme.utilityKeyPressed : theme.utilityKeyFill
             }
+        }
+
+        if wasLower != isLowercaseLetter {
+            setNeedsLayout()
         }
     }
 
@@ -229,7 +246,7 @@ private final class KeyPopupView: UIView {
         let w = max(keyFrame.width + 14, 44)
         let h: CGFloat = 52
         let x = min(max(keyFrame.midX - w * 0.5, 4), containerBounds.width - w - 4)
-        let y = max(4, keyFrame.minY - h - 6)
+        let y = max(-InstrumentBarView.height + 2, keyFrame.minY - h - 4)
         frame = CGRect(x: x, y: y, width: w, height: h)
         label.frame = bounds
         isHidden = false
@@ -248,7 +265,7 @@ private final class KeyPopupView: UIView {
         let totalW = CGFloat(list.count) * itemW + pad * 2
         let h: CGFloat = 46
         let x = min(max(keyFrame.midX - totalW * 0.5, 4), containerBounds.width - totalW - 4)
-        let y = max(4, keyFrame.minY - h - 6)
+        let y = max(-InstrumentBarView.height + 2, keyFrame.minY - h - 4)
         frame = CGRect(x: x, y: y, width: totalW, height: h)
 
         for (i, txt) in list.enumerated() {
@@ -300,7 +317,7 @@ private final class KeyPopupView: UIView {
 }
 
 @MainActor
-final class KeyboardDeckView: UIView {
+final class KeyboardDeckView: UIView, UIInputViewAudioFeedback {
     var onTapCharacter: ((_ text: String, _ normPoint: CGPoint) -> Void)?
     var onDirectInsert: ((_ text: String) -> Void)?
     var onSpace: (() -> Void)?
@@ -314,6 +331,8 @@ final class KeyboardDeckView: UIView {
     var onGlobePress: ((_ view: UIView, _ event: UIEvent) -> Void)?
     var onLayerChanged: ((DeckLayer) -> Void)?
 
+    var enableInputClicksWhenVisible: Bool { true }
+
     private(set) var layerKind: DeckLayer = .letters
     private var theme = KeyboardTheme.resolved(dark: false)
     private var showNumberRow = true
@@ -323,6 +342,7 @@ final class KeyboardDeckView: UIView {
     private var needsGlobe = true
     private var shiftState: ShiftStateDTO = .off
     private var returnKeyType: UIReturnKeyType = .default
+    private var likelyNextSet: Set<String> = []
 
     private var rows: [[KeyTileView]] = []
     private var letterAreaFrame: CGRect = .zero
@@ -336,6 +356,11 @@ final class KeyboardDeckView: UIView {
     private weak var activeTouch: UITouch?
     private weak var startTile: KeyTileView?
     private var startPoint: CGPoint = .zero
+    private var touchStartTime: TimeInterval = 0
+    private weak var shiftHoldTouch: UITouch?
+    private var shiftBeforeTouch: ShiftStateDTO = .off
+    private var shiftHoldTypedAny = false
+    private var didCapsLockOnHold = false
     private var isFlicking = false
     private var isGliding = false
     private var isTrackpad = false
@@ -344,9 +369,11 @@ final class KeyboardDeckView: UIView {
     private var glideDisplayPoints: [CGPoint] = []
     private var visitedLetters: Set<String> = []
     private var longPressTimer: Timer?
+    private var shiftLongPressTimer: Timer?
     private var backspaceRepeatTimer: Timer?
     private var didRepeatBackspace = false
     private var swipeDeleteTriggered = false
+    private var swipeDeleteLastX: CGFloat = 0
     private var lastShiftTapTime: TimeInterval = 0
 
     private static let accents: [String: [String]] = [
@@ -359,7 +386,7 @@ final class KeyboardDeckView: UIView {
         "s": ["s", "ß", "ś", "š"],
         "u": ["u", "ú", "ù", "û", "ü", "ū"],
         "y": ["y", "ÿ"],
-        ".": [".", "…", ".com", ".au", "!", "?"],
+        ".": [".", ",", "?", "!", "…", "'", ".com", ".au"],
         "-": ["-", "–", "—", "•"],
         "$": ["$", "€", "£", "¥", "¢"],
     ]
@@ -383,6 +410,14 @@ final class KeyboardDeckView: UIView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func setLikelyNextChars(_ chars: String) {
+        if chars.isEmpty {
+            likelyNextSet.removeAll()
+        } else {
+            likelyNextSet = Set(chars.lowercased().map { String($0) })
+        }
     }
 
     func setConfiguration(
@@ -411,7 +446,9 @@ final class KeyboardDeckView: UIView {
             self.needsGlobe = gl
             needsRebuild = true
         }
-        if let s = shiftState { self.shiftState = s }
+        if let s = shiftState {
+            self.shiftState = (shiftHoldTouch != nil && s == .off) ? .once : s
+        }
         if let r = returnKeyType { self.returnKeyType = r }
 
         if needsRebuild {
@@ -452,13 +489,15 @@ final class KeyboardDeckView: UIView {
     private func refreshAllTiles() {
         for row in rows {
             for tile in row {
-                let isPressed = tile === startTile && !isGliding && !isTrackpad
+                let isShiftHeld = (tile.spec.action == .shift && shiftHoldTouch != nil)
+                let isPressed = isShiftHeld || (tile === startTile && !isGliding && !isTrackpad)
                 tile.configure(
                     theme: theme,
                     shift: shiftState,
                     showFlicks: showFlicks,
                     returnType: returnKeyType,
-                    pressed: isPressed
+                    pressed: isPressed,
+                    trackpadActive: isTrackpad
                 )
             }
         }
@@ -538,16 +577,16 @@ final class KeyboardDeckView: UIView {
 
     private func bottomUtilityRow(leftLayer: DeckLayer, leftTitle: String) -> [KeySpec] {
         var row: [KeySpec] = [
-            KeySpec(action: .layer(leftLayer, title: leftTitle), weight: 1.30, isUtility: true),
+            KeySpec(action: .layer(leftLayer, title: leftTitle), weight: 1.35, isUtility: true),
         ]
         if needsGlobe {
-            row.append(KeySpec(action: .globe, weight: 1.0, isUtility: true))
+            row.append(KeySpec(action: .globe, weight: 0.95, isUtility: true))
         }
-        row.append(KeySpec(action: .emoji, weight: 1.0, isUtility: true))
+        row.append(KeySpec(action: .emoji, weight: 0.95, isUtility: true))
         row.append(KeySpec(action: .symbol(","), weight: 0.78, isUtility: false))
-        row.append(KeySpec(action: .space, weight: needsGlobe ? 3.9 : 4.9, isUtility: false))
+        row.append(KeySpec(action: .space, weight: needsGlobe ? 4.15 : 5.05, isUtility: false))
         row.append(KeySpec(action: .symbol("."), weight: 0.78, isUtility: false))
-        row.append(KeySpec(action: .returnKey, weight: 2.05, isUtility: true))
+        row.append(KeySpec(action: .returnKey, weight: 1.90, isUtility: true))
         return row
     }
 
@@ -618,13 +657,30 @@ final class KeyboardDeckView: UIView {
         }
     }
 
-    private func tile(at point: CGPoint) -> KeyTileView? {
+    private func tile(at point: CGPoint, applyBias: Bool = true) -> KeyTileView? {
+        guard !rows.isEmpty, bounds.insetBy(dx: -8, dy: -8).contains(point) else { return nil }
+        var bestTile: KeyTileView?
+        var bestScore = CGFloat.greatestFiniteMagnitude
         for row in rows {
-            for tv in row where tv.frame.insetBy(dx: -2, dy: -3).contains(point) {
-                return tv
+            for tv in row {
+                let f = tv.frame
+                if f.isEmpty { continue }
+                let dx = point.x < f.minX ? (f.minX - point.x) : (point.x > f.maxX ? (point.x - f.maxX) : 0)
+                let dy = point.y < f.minY ? (f.minY - point.y) : (point.y > f.maxY ? (point.y - f.maxY) : 0)
+                var dist = hypot(dx, dy * 1.45)
+                if applyBias,
+                   case let .char(lower, _, _) = tv.spec.action,
+                   likelyNextSet.contains(lower),
+                   dist > 0, dist <= 5.5 {
+                    dist = max(0.01, dist - 2.5)
+                }
+                if dist < bestScore {
+                    bestScore = dist
+                    bestTile = tv
+                }
             }
         }
-        return nil
+        return bestTile
     }
 
     private func normalizedPoint(_ pt: CGPoint) -> CGPoint {
@@ -648,7 +704,13 @@ final class KeyboardDeckView: UIView {
         backspaceRepeatTimer = nil
     }
 
-    private func resetTouchState() {
+    private func clearAllTimers() {
+        clearTimers()
+        shiftLongPressTimer?.invalidate()
+        shiftLongPressTimer = nil
+    }
+
+    private func resetActiveTouchState() {
         clearTimers()
         activeTouch = nil
         startTile = nil
@@ -656,6 +718,7 @@ final class KeyboardDeckView: UIView {
         isGliding = false
         isTrackpad = false
         swipeDeleteTriggered = false
+        swipeDeleteLastX = 0
         glidePoints.removeAll()
         glideDisplayPoints.removeAll()
         visitedLetters.removeAll()
@@ -665,59 +728,85 @@ final class KeyboardDeckView: UIView {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first else { return }
-        let pt = touch.location(in: self)
-        guard let tv = tile(at: pt) else { return }
+        impactFeedback.prepare()
+        for touch in touches {
+            let pt = touch.location(in: self)
+            guard let tv = tile(at: pt, applyBias: true) else { continue }
 
-        if let prev = startTile, activeTouch != nil, prev !== tv {
-            // Fast two-thumb rollover: commit previous tap cleanly before beginning the new key.
-            commitActiveKey(upPoint: prev.center, event: event)
-            resetTouchState()
-        }
-
-        activeTouch = touch
-        startTile = tv
-        startPoint = pt
-        isFlicking = false
-        isGliding = false
-        isTrackpad = false
-        trackpadAccumX = 0
-        didRepeatBackspace = false
-        swipeDeleteTriggered = false
-        glidePoints = [normalizedPoint(pt)]
-        glideDisplayPoints = [pt]
-        visitedLetters.removeAll()
-
-        if case let .char(lower, _, _) = tv.spec.action {
-            visitedLetters.insert(lower)
-        }
-
-        triggerLightHaptic()
-        refreshAllTiles()
-
-        switch tv.spec.action {
-        case let .char(lower, upper, _):
-            let shown = shiftState == .off ? lower : upper
-            popupView.showSingle(shown, over: tv.frame, in: bounds, theme: theme)
-            startLongPressTimer(for: tv)
-        case let .symbol(s):
-            popupView.showSingle(s, over: tv.frame, in: bounds, theme: theme)
-            startLongPressTimer(for: tv)
-        case .shift:
-            startLongPressTimer(for: tv)
-        case .backspace:
-            backspaceRepeatTimer = Timer.scheduledTimer(withTimeInterval: 0.38, repeats: false) { [weak self] _ in
-                Task { @MainActor in
-                    self?.beginBackspaceRepeat()
+            if tv.spec.action == .shift && shiftHoldTouch == nil {
+                shiftHoldTouch = touch
+                shiftBeforeTouch = shiftState
+                shiftHoldTypedAny = false
+                didCapsLockOnHold = false
+                if shiftState == .off {
+                    shiftState = .once
+                    onShiftChanged?(.once)
                 }
+                triggerLightHaptic()
+                UIDevice.current.playInputClick()
+                startShiftLongPressTimer()
+                refreshAllTiles()
+                continue
             }
-        case .globe:
-            if let event {
-                onGlobePress?(tv, event)
+
+            if let prev = startTile, activeTouch != nil, prev !== tv {
+                // Fast two-thumb rollover: commit previous tap cleanly with its real touch point.
+                let prevPoint = startPoint
+                commitActiveKey(startPoint: prevPoint, event: event)
+                resetActiveTouchState()
             }
-            resetTouchState()
-        default:
-            break
+
+            if shiftHoldTouch != nil {
+                shiftHoldTypedAny = true
+                shiftLongPressTimer?.invalidate()
+                shiftLongPressTimer = nil
+            }
+
+            activeTouch = touch
+            startTile = tv
+            startPoint = pt
+            touchStartTime = touch.timestamp
+            isFlicking = false
+            isGliding = false
+            isTrackpad = false
+            trackpadAccumX = 0
+            didRepeatBackspace = false
+            swipeDeleteTriggered = false
+            swipeDeleteLastX = pt.x
+            glidePoints = [normalizedPoint(pt)]
+            glideDisplayPoints = [pt]
+            visitedLetters.removeAll()
+
+            if case let .char(lower, _, _) = tv.spec.action {
+                visitedLetters.insert(lower)
+            }
+
+            triggerLightHaptic()
+            UIDevice.current.playInputClick()
+            refreshAllTiles()
+
+            switch tv.spec.action {
+            case let .char(lower, upper, _):
+                let shown = shiftState == .off ? lower : upper
+                popupView.showSingle(shown, over: tv.frame, in: bounds, theme: theme)
+                startLongPressTimer(for: tv)
+            case let .symbol(s):
+                popupView.showSingle(s, over: tv.frame, in: bounds, theme: theme)
+                startLongPressTimer(for: tv)
+            case .backspace:
+                backspaceRepeatTimer = Timer.scheduledTimer(withTimeInterval: 0.38, repeats: false) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.beginBackspaceRepeat()
+                    }
+                }
+            case .globe:
+                if let event {
+                    onGlobePress?(tv, event)
+                }
+                resetActiveTouchState()
+            default:
+                break
+            }
         }
     }
 
@@ -726,6 +815,7 @@ final class KeyboardDeckView: UIView {
         let pt = touch.location(in: self)
         let dx = pt.x - startPoint.x
         let dy = pt.y - startPoint.y
+        let elapsed = touch.timestamp - touchStartTime
 
         if !popupView.isHidden && popupView.currentSelectedOption != nil && longPressTimer == nil {
             _ = popupView.updateOptionSelection(touchX: pt.x, theme: theme)
@@ -734,16 +824,17 @@ final class KeyboardDeckView: UIView {
 
         switch tv.spec.action {
         case .space:
-            if !isTrackpad && abs(dx) >= 10 {
+            if !isTrackpad && ((elapsed >= 0.22 && abs(dx) >= 8) || (abs(dx) >= 26 && elapsed >= 0.08 && abs(dx) > abs(dy) * 1.6)) {
                 isTrackpad = true
                 clearTimers()
                 popupView.isHidden = true
                 trackpadAccumX = pt.x
                 selectionFeedback.prepare()
+                refreshAllTiles()
             }
             if isTrackpad {
                 let delta = pt.x - trackpadAccumX
-                let step: CGFloat = 10.0
+                let step: CGFloat = 9.0
                 if abs(delta) >= step {
                     let chars = Int(delta / step)
                     trackpadAccumX += CGFloat(chars) * step
@@ -753,15 +844,20 @@ final class KeyboardDeckView: UIView {
             }
 
         case .backspace:
-            if !swipeDeleteTriggered && dx <= -26 {
+            if !swipeDeleteTriggered && dx <= -30 && abs(dx) > abs(dy) * 1.6 {
                 swipeDeleteTriggered = true
+                swipeDeleteLastX = pt.x
                 clearTimers()
+                triggerLightHaptic()
+                onSwipeDeleteWord?()
+            } else if swipeDeleteTriggered && (swipeDeleteLastX - pt.x) >= 44 {
+                swipeDeleteLastX = pt.x
                 triggerLightHaptic()
                 onSwipeDeleteWord?()
             }
 
         case let .char(lower, upper, flick):
-            if let flick, showFlicks, !isGliding, abs(dx) < tv.bounds.width * 0.72, dy >= 18 {
+            if let flick, showFlicks, !isGliding, dy >= 28, dy > abs(dx) * 1.65 {
                 if !isFlicking {
                     isFlicking = true
                     longPressTimer?.invalidate()
@@ -771,17 +867,19 @@ final class KeyboardDeckView: UIView {
                 popupView.showSingle(flick, over: tv.frame, in: bounds, theme: theme)
                 return
             }
-            if isFlicking && dy < 14 {
+            if isFlicking && dy < 20 {
                 isFlicking = false
                 let shown = shiftState == .off ? lower : upper
                 popupView.showSingle(shown, over: tv.frame, in: bounds, theme: theme)
             }
 
-            guard glideEnabled, layerKind == .letters else { return }
-            if let hit = tile(at: pt), case let .char(hl, _, _) = hit.spec.action {
+            guard glideEnabled, layerKind == .letters, !isFlicking else { return }
+            if let hit = tile(at: pt, applyBias: false),
+               hit.frame.insetBy(dx: 3, dy: 3).contains(pt),
+               case let .char(hl, _, _) = hit.spec.action {
                 visitedLetters.insert(hl)
             }
-            if !isGliding && hypot(dx, dy) >= 22 && visitedLetters.count >= 2 {
+            if !isGliding && hypot(dx, dy) >= 34 && elapsed >= 0.065 && visitedLetters.count >= 2 {
                 isGliding = true
                 longPressTimer?.invalidate()
                 longPressTimer = nil
@@ -800,18 +898,55 @@ final class KeyboardDeckView: UIView {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = activeTouch, touches.contains(touch) else { return }
-        let pt = touch.location(in: self)
-        commitActiveKey(upPoint: pt, event: event)
-        resetTouchState()
+        if let touch = activeTouch, touches.contains(touch) {
+            let committedStart = startPoint
+            commitActiveKey(startPoint: committedStart, event: event)
+            resetActiveTouchState()
+        }
+
+        if let sh = shiftHoldTouch, touches.contains(sh) {
+            shiftLongPressTimer?.invalidate()
+            shiftLongPressTimer = nil
+            if didCapsLockOnHold {
+                shiftState = .capsLock
+            } else if shiftHoldTypedAny {
+                shiftState = .off
+            } else {
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - lastShiftTapTime < 0.32 && shiftBeforeTouch != .capsLock {
+                    shiftState = .capsLock
+                } else if shiftBeforeTouch == .off {
+                    shiftState = .once
+                } else {
+                    shiftState = .off
+                }
+                lastShiftTapTime = now
+            }
+            shiftHoldTouch = nil
+            shiftHoldTypedAny = false
+            didCapsLockOnHold = false
+            onShiftChanged?(shiftState)
+            refreshAllTiles()
+        }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = activeTouch, touches.contains(touch) else { return }
-        resetTouchState()
+        if let touch = activeTouch, touches.contains(touch) {
+            resetActiveTouchState()
+        }
+        if let sh = shiftHoldTouch, touches.contains(sh) {
+            shiftLongPressTimer?.invalidate()
+            shiftLongPressTimer = nil
+            shiftState = shiftBeforeTouch
+            shiftHoldTouch = nil
+            shiftHoldTypedAny = false
+            didCapsLockOnHold = false
+            onShiftChanged?(shiftState)
+            refreshAllTiles()
+        }
     }
 
-    private func commitActiveKey(upPoint: CGPoint, event: UIEvent?) {
+    private func commitActiveKey(startPoint: CGPoint, event: UIEvent?) {
         guard let tv = startTile else { return }
 
         if isTrackpad || swipeDeleteTriggered {
@@ -821,6 +956,11 @@ final class KeyboardDeckView: UIView {
         if isGliding {
             if glidePoints.count >= 2 {
                 onGlideComplete?(glidePoints)
+            }
+            if shiftHoldTouch != nil {
+                shiftHoldTypedAny = true
+                shiftState = .once
+                onShiftChanged?(.once)
             }
             return
         }
@@ -836,25 +976,19 @@ final class KeyboardDeckView: UIView {
                 onDirectInsert?(flick)
             } else {
                 let text = shiftState == .off ? lower : upper
-                onTapCharacter?(text, normalizedPoint(tv.center))
+                onTapCharacter?(text, normalizedPoint(startPoint))
+            }
+            if shiftHoldTouch != nil {
+                shiftHoldTypedAny = true
+                shiftState = .once
+                onShiftChanged?(.once)
             }
 
         case let .symbol(s):
             onDirectInsert?(s)
 
         case .shift:
-            let now = ProcessInfo.processInfo.systemUptime
-            if now - lastShiftTapTime < 0.32 && shiftState != .capsLock {
-                shiftState = .capsLock
-            } else {
-                switch shiftState {
-                case .off: shiftState = .once
-                case .once, .capsLock: shiftState = .off
-                }
-            }
-            lastShiftTapTime = now
-            onShiftChanged?(shiftState)
-            refreshAllTiles()
+            break
 
         case .backspace:
             if !didRepeatBackspace {
@@ -870,6 +1004,10 @@ final class KeyboardDeckView: UIView {
 
         case .space:
             onSpace?()
+            if layerKind == .numbers || layerKind == .symbols {
+                setConfiguration(layerKind: .letters)
+                onLayerChanged?(.letters)
+            }
 
         case .returnKey:
             onReturn?()
@@ -879,17 +1017,27 @@ final class KeyboardDeckView: UIView {
         }
     }
 
+    private func startShiftLongPressTimer() {
+        shiftLongPressTimer?.invalidate()
+        shiftLongPressTimer = Timer.scheduledTimer(withTimeInterval: 0.36, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.shiftHoldTouch != nil, !self.shiftHoldTypedAny else { return }
+                self.didCapsLockOnHold = true
+                self.shiftState = .capsLock
+                self.onShiftChanged?(.capsLock)
+                self.triggerLightHaptic()
+                self.refreshAllTiles()
+                self.shiftLongPressTimer = nil
+            }
+        }
+    }
+
     private func startLongPressTimer(for tile: KeyTileView) {
         longPressTimer?.invalidate()
         longPressTimer = Timer.scheduledTimer(withTimeInterval: 0.36, repeats: false) { [weak self, weak tile] _ in
             Task { @MainActor in
                 guard let self, let tile, self.startTile === tile, !self.isGliding, !self.isFlicking else { return }
                 switch tile.spec.action {
-                case .shift:
-                    self.shiftState = .capsLock
-                    self.onShiftChanged?(.capsLock)
-                    self.triggerLightHaptic()
-                    self.refreshAllTiles()
                 case let .char(lower, _, _):
                     if let list = Self.accents[lower] {
                         let cased = self.shiftState == .off ? list : list.map { $0.uppercased() }

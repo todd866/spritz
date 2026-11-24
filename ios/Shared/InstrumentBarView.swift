@@ -9,13 +9,12 @@ enum InstrumentBarMode: Equatable {
 
 @MainActor
 final class InstrumentBarView: UIView {
-    static let height: CGFloat = 38
+    static let height: CGFloat = 42
 
     var onSelectCandidate: ((Int) -> Void)?
     var onSelectEmojiHint: ((EmojiHintDTO) -> Void)?
     var onTapUndoDelete: (() -> Void)?
     var onToggleTools: (() -> Void)?
-    var onToggleEmoji: (() -> Void)?
     var onCloseEmojiSearch: (() -> Void)?
     var onSelectEmojiResult: ((EmojiItemDTO) -> Void)?
     var onToolAction: ((ToolAction) -> Void)?
@@ -40,7 +39,6 @@ final class InstrumentBarView: UIView {
     private var snippets: [(trigger: String, body: String)] = []
     private var undoWord: String?
     private var selectModeActive = false
-    private var emojiModeActive = false
 
     private let bottomHairline = UIView()
 
@@ -51,7 +49,6 @@ final class InstrumentBarView: UIView {
     private let divider2 = UIView()
     private let hintOrUndoButton = UIButton(type: .system)
     private let toolsButton = UIButton(type: .system)
-    private let emojiButton = UIButton(type: .system)
 
     // Tools strip views
     private let toolsStack = UIStackView()
@@ -117,7 +114,7 @@ final class InstrumentBarView: UIView {
         let candsContainer = UIStackView()
         candsContainer.axis = .horizontal
         candsContainer.alignment = .center
-        candsContainer.distribution = .fillEqually
+        candsContainer.distribution = .fill
         candsContainer.spacing = 4
 
         for i in 0..<3 {
@@ -126,7 +123,7 @@ final class InstrumentBarView: UIView {
             btn.titleLabel?.font = .systemFont(ofSize: 15, weight: .regular)
             btn.titleLabel?.lineBreakMode = .byTruncatingTail
             btn.layer.cornerRadius = 6
-            btn.heightAnchor.constraint(equalToConstant: 30).isActive = true
+            btn.heightAnchor.constraint(equalToConstant: 32).isActive = true
             btn.addTarget(self, action: #selector(handleCandidateTap(_:)), for: .touchUpInside)
             candidateButtons.append(btn)
         }
@@ -139,13 +136,20 @@ final class InstrumentBarView: UIView {
         }
 
         candsContainer.addArrangedSubview(candidateButtons[0])
+        candsContainer.addArrangedSubview(divider1)
         candsContainer.addArrangedSubview(candidateButtons[1])
+        candsContainer.addArrangedSubview(divider2)
         candsContainer.addArrangedSubview(candidateButtons[2])
+
+        NSLayoutConstraint.activate([
+            candidateButtons[1].widthAnchor.constraint(equalTo: candidateButtons[0].widthAnchor),
+            candidateButtons[2].widthAnchor.constraint(equalTo: candidateButtons[0].widthAnchor),
+        ])
 
         hintOrUndoButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .medium)
         hintOrUndoButton.layer.cornerRadius = 6
         hintOrUndoButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 7, bottom: 0, right: 7)
-        hintOrUndoButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        hintOrUndoButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         hintOrUndoButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         hintOrUndoButton.setContentHuggingPriority(.required, for: .horizontal)
         hintOrUndoButton.addTarget(self, action: #selector(handleHintOrUndoTap), for: .touchUpInside)
@@ -153,23 +157,14 @@ final class InstrumentBarView: UIView {
         toolsButton.setImage(UIImage(systemName: "slider.horizontal.3"), for: .normal)
         toolsButton.setPreferredSymbolConfiguration(.init(pointSize: 13.5, weight: .medium), forImageIn: .normal)
         toolsButton.layer.cornerRadius = 6
-        toolsButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
-        toolsButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        toolsButton.widthAnchor.constraint(equalToConstant: 32).isActive = true
+        toolsButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         toolsButton.accessibilityLabel = "Editing tools"
         toolsButton.addTarget(self, action: #selector(handleToolsToggle), for: .touchUpInside)
-
-        emojiButton.setImage(UIImage(systemName: "face.smiling"), for: .normal)
-        emojiButton.setPreferredSymbolConfiguration(.init(pointSize: 14, weight: .medium), forImageIn: .normal)
-        emojiButton.layer.cornerRadius = 6
-        emojiButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
-        emojiButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
-        emojiButton.accessibilityLabel = "Emoji keyboard"
-        emojiButton.addTarget(self, action: #selector(handleToggleEmoji), for: .touchUpInside)
 
         predictStack.addArrangedSubview(candsContainer)
         predictStack.addArrangedSubview(hintOrUndoButton)
         predictStack.addArrangedSubview(toolsButton)
-        predictStack.addArrangedSubview(emojiButton)
     }
 
     private func setupToolsRow() {
@@ -312,7 +307,6 @@ final class InstrumentBarView: UIView {
         undoWord: String?,
         snippets: [String: String],
         selectActive: Bool,
-        emojiActive: Bool,
         emojiSearchQuery: String,
         emojiSearchResults: [EmojiItemDTO]
     ) {
@@ -322,7 +316,6 @@ final class InstrumentBarView: UIView {
         self.undoWord = undoWord
         self.snippets = snippets.sorted(by: { $0.key < $1.key }).map { ($0.key, $0.value) }
         self.selectModeActive = selectActive
-        self.emojiModeActive = emojiActive
         self.emojiSearchQuery = emojiSearchQuery
         self.emojiSearchResults = emojiSearchResults
         refreshUI()
@@ -337,9 +330,6 @@ final class InstrumentBarView: UIView {
 
         toolsButton.tintColor = mode == .tools ? theme.accentInk : theme.primaryInk
         toolsButton.backgroundColor = mode == .tools ? theme.accentFill : .clear
-
-        emojiButton.tintColor = emojiModeActive ? theme.accentInk : theme.primaryInk
-        emojiButton.backgroundColor = emojiModeActive ? theme.accentFill : .clear
 
         for btn in toolButtons {
             let active = btn === selectButton && selectModeActive
@@ -404,8 +394,6 @@ final class InstrumentBarView: UIView {
 
             toolsButton.tintColor = theme.primaryInk
             toolsButton.backgroundColor = .clear
-            emojiButton.tintColor = emojiModeActive ? theme.accentInk : theme.primaryInk
-            emojiButton.backgroundColor = emojiModeActive ? theme.accentFill : .clear
 
         case .tools:
             selectButton.tintColor = selectModeActive ? theme.accentInk : theme.primaryInk
@@ -461,10 +449,6 @@ final class InstrumentBarView: UIView {
 
     @objc private func handleToolsToggle() {
         onToggleTools?()
-    }
-
-    @objc private func handleToggleEmoji() {
-        onToggleEmoji?()
     }
 
     @objc private func handleCloseEmojiSearch() {

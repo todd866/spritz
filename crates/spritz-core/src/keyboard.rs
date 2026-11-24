@@ -148,6 +148,52 @@ pub struct KeyboardOutput {
     pub undo_word: Option<String>,
     pub shift_state: ShiftState,
     pub auto_space_active: bool,
+    pub likely_next_chars: String,
+}
+
+static KEY_DIST_LUT: OnceLock<[[f32; 26]; 26]> = OnceLock::new();
+
+#[inline]
+fn key_dist_lut() -> &'static [[f32; 26]; 26] {
+    KEY_DIST_LUT.get_or_init(|| {
+        let mut table = [[4.0f32; 26]; 26];
+        for i in 0..26u8 {
+            let ca = (b'a' + i) as char;
+            for j in 0..26u8 {
+                let cb = (b'a' + j) as char;
+                table[i as usize][j as usize] = QwertyGeometry::key_distance(ca, cb);
+            }
+        }
+        table
+    })
+}
+
+#[inline]
+fn byte_key_distance(a: u8, b: u8) -> f32 {
+    if a == b {
+        return 0.0;
+    }
+    let la = a.to_ascii_lowercase();
+    let lb = b.to_ascii_lowercase();
+    if la == lb {
+        return 0.0;
+    }
+    if la.is_ascii_lowercase() && lb.is_ascii_lowercase() {
+        return key_dist_lut()[(la - b'a') as usize][(lb - b'a') as usize];
+    }
+    4.0
+}
+
+#[inline]
+fn ascii_letter_mask(word: &str) -> u32 {
+    let mut mask = 0u32;
+    for &b in word.as_bytes() {
+        let lb = b.to_ascii_lowercase();
+        if lb.is_ascii_lowercase() {
+            mask |= 1u32 << (lb - b'a');
+        }
+    }
+    mask
 }
 
 /// Normalized `[0..1] x [0..1]` staggered iPhone QWERTY key centers.
@@ -217,6 +263,7 @@ impl QwertyGeometry {
 pub struct Lexicon {
     pub words: Vec<&'static str>,
     pub lower_words: Vec<String>,
+    pub letter_masks: Vec<u32>,
     pub exact: HashMap<String, u32>,
     pub by_len: [Vec<u32>; 22],
     pub by_endpoints: Vec<Vec<u32>>,
@@ -237,6 +284,7 @@ impl Lexicon {
     pub fn load_embedded() -> Self {
         let mut words: Vec<&'static str> = Vec::with_capacity(23_000);
         let mut lower_words: Vec<String> = Vec::with_capacity(23_000);
+        let mut letter_masks: Vec<u32> = Vec::with_capacity(23_000);
         let mut exact: HashMap<String, u32> = HashMap::with_capacity(23_000);
         let mut by_len: [Vec<u32>; 22] = std::array::from_fn(|_| Vec::new());
         let mut by_endpoints: Vec<Vec<u32>> = vec![Vec::new(); 26 * 26];
@@ -261,8 +309,12 @@ impl Lexicon {
                 let bucket = endpoint_index(f, l);
                 by_endpoints[bucket].push(idx);
             }
+            letter_masks.push(ascii_letter_mask(&lower));
             lower_words.push(lower);
         }
+
+        // Prime key distance lookup table on lexicon initialization.
+        let _ = key_dist_lut();
 
         let contractions = build_contractions();
         let (au_uk_set, us_to_au_uk, au_uk_to_us) = build_variant_maps();
@@ -271,6 +323,7 @@ impl Lexicon {
         Self {
             words,
             lower_words,
+            letter_masks,
             exact,
             by_len,
             by_endpoints,
@@ -327,11 +380,17 @@ impl Lexicon {
 
 #[inline]
 fn alpha_endpoints(word: &str) -> Option<(u8, u8)> {
-    let bytes: Vec<u8> = word.bytes().filter(|b| b.is_ascii_lowercase()).collect();
-    if bytes.is_empty() {
-        return None;
+    let mut first: Option<u8> = None;
+    let mut last = 0u8;
+    for b in word.bytes() {
+        if b.is_ascii_lowercase() {
+            if first.is_none() {
+                first = Some(b);
+            }
+            last = b;
+        }
     }
-    Some((bytes[0] - b'a', bytes[bytes.len() - 1] - b'a'))
+    first.map(|f| (f - b'a', last - b'a'))
 }
 
 #[inline]
@@ -379,7 +438,67 @@ fn capitalize_first(s: &str) -> String {
 }
 
 /// Spatial-weighted Damerau-Levenshtein distance capped near `max_cost`.
+/// Uses a zero-allocation stack matrix for ASCII words <= 24 bytes.
 fn spatial_damerau_distance(typed: &str, cand: &str, max_cost: f32) -> f32 {
+    if typed.is_ascii() && cand.is_ascii() {
+        let a = typed.as_bytes();
+        let b = cand.as_bytes();
+        let m = a.len();
+        let n = b.len();
+        if m == 0 {
+            return n as f32;
+        }
+        if n == 0 {
+            return m as f32;
+        }
+        if m.abs_diff(n) > 2 {
+            return max_cost + 1.0;
+        }
+        if m <= 24 && n <= 24 {
+            let width = n + 1;
+            let mut dp = [max_cost + 2.0; 25 * 25];
+            dp[0] = 0.0;
+            for i in 1..=m {
+                dp[i * width] = (i as f32) * 0.85;
+            }
+            for j in 1..=n {
+                dp[j] = (j as f32) * 0.85;
+            }
+
+            for i in 1..=m {
+                let mut row_min = f32::MAX;
+                let ai = a[i - 1];
+                for j in 1..=n {
+                    let bj = b[j - 1];
+                    let sub_cost = if ai == bj {
+                        0.0
+                    } else {
+                        let kd = byte_key_distance(ai, bj);
+                        if kd <= 1.25 {
+                            0.36
+                        } else if kd <= 1.9 {
+                            0.56
+                        } else {
+                            1.0
+                        }
+                    };
+                    let mut best = (dp[(i - 1) * width + j] + 0.82)
+                        .min(dp[i * width + (j - 1)] + 0.82)
+                        .min(dp[(i - 1) * width + (j - 1)] + sub_cost);
+                    if i > 1 && j > 1 && ai == b[j - 2] && a[i - 2] == bj {
+                        best = best.min(dp[(i - 2) * width + (j - 2)] + 0.42);
+                    }
+                    dp[i * width + j] = best;
+                    row_min = row_min.min(best);
+                }
+                if row_min > max_cost + 0.9 {
+                    return max_cost + 1.0;
+                }
+            }
+            return dp[m * width + n];
+        }
+    }
+
     let a: Vec<char> = typed.chars().collect();
     let b: Vec<char> = cand.chars().collect();
     let m = a.len();
@@ -440,17 +559,53 @@ fn tap_touch_penalty(tap_points: &[(f32, f32)], cand: &str) -> f32 {
     if tap_points.is_empty() {
         return 0.0;
     }
-    let cchars: Vec<char> = cand.chars().filter(|c| c.is_ascii_alphabetic()).collect();
-    if tap_points.len() != cchars.len() {
-        return 0.0;
-    }
     let mut sum = 0.0f32;
-    for (&(tx, ty), &ch) in tap_points.iter().zip(cchars.iter()) {
-        if let Some((kx, ky)) = QwertyGeometry::key_center(ch) {
+    let mut ti = 0usize;
+    for &b in cand.as_bytes() {
+        if !b.is_ascii_alphabetic() {
+            continue;
+        }
+        if ti >= tap_points.len() {
+            return 0.0;
+        }
+        let (tx, ty) = tap_points[ti];
+        ti += 1;
+        if let Some((kx, ky)) = QwertyGeometry::key_center(b as char) {
             sum += QwertyGeometry::norm_dist(tx, ty, kx, ky);
         }
     }
-    sum / (cchars.len() as f32)
+    if ti != tap_points.len() || ti == 0 {
+        return 0.0;
+    }
+    sum / (ti as f32)
+}
+
+pub fn compute_likely_next_chars(word: &str) -> String {
+    if word.is_empty() || !word.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return String::new();
+    }
+    let lex = Lexicon::global();
+    let lower = word.to_ascii_lowercase();
+    let prefix_len = lower.len();
+    let mut seen_mask = 0u32;
+    let mut out = String::with_capacity(8);
+
+    for lw in &lex.lower_words {
+        if lw.len() > prefix_len && lw.starts_with(&lower) {
+            let next_b = lw.as_bytes()[prefix_len];
+            if next_b.is_ascii_lowercase() {
+                let bit = 1u32 << (next_b - b'a');
+                if (seen_mask & bit) == 0 {
+                    seen_mask |= bit;
+                    out.push(next_b as char);
+                    if out.len() >= 8 {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 pub fn suggest_for_word(
@@ -458,6 +613,16 @@ pub fn suggest_for_word(
     tap_points: &[(f32, f32)],
     config: &KeyboardConfig,
     shift: ShiftState,
+) -> Vec<CandidateItem> {
+    suggest_for_word_checked(word, tap_points, config, shift, false)
+}
+
+pub fn suggest_for_word_checked(
+    word: &str,
+    tap_points: &[(f32, f32)],
+    config: &KeyboardConfig,
+    shift: ShiftState,
+    system_known: bool,
 ) -> Vec<CandidateItem> {
     if word.is_empty() {
         return Vec::new();
@@ -487,22 +652,31 @@ pub fn suggest_for_word(
             .map_or(false, |r| r.eq_ignore_ascii_case(contracted));
         if !rejected {
             let formatted = apply_word_casing(word, contracted, shift);
-            return vec![
-                CandidateItem {
+            if word != formatted {
+                return vec![
+                    CandidateItem {
+                        text: word.to_string(),
+                        kind: CandidateKind::Literal,
+                        auto_commit: false,
+                    },
+                    CandidateItem {
+                        text: formatted,
+                        kind: CandidateKind::Correction,
+                        auto_commit: config.autocorrect != AutocorrectMode::Off,
+                    },
+                ];
+            } else {
+                return vec![CandidateItem {
                     text: word.to_string(),
                     kind: CandidateKind::Literal,
                     auto_commit: false,
-                },
-                CandidateItem {
-                    text: formatted,
-                    kind: CandidateKind::Correction,
-                    auto_commit: config.autocorrect != AutocorrectMode::Off,
-                },
-            ];
+                }];
+            }
         }
     }
 
-    let known = lex.is_known_word(&lower, config.english_variant, &config.personal_words);
+    let known = lex.is_known_word(&lower, config.english_variant, &config.personal_words)
+        || (system_known && !lex.contractions.contains_key(lower.as_str()));
     let mut completions: Vec<(String, u32)> = Vec::new();
     if lower.len() >= 2 && lower.chars().all(|c| c.is_ascii_alphabetic()) {
         for (i, lw) in lex.lower_words.iter().enumerate() {
@@ -521,9 +695,16 @@ pub fn suggest_for_word(
         let max_cost = if lower.len() <= 3 { 0.88 } else { 1.45 };
         let min_len = lower.len().saturating_sub(2).max(2);
         let max_len = (lower.len() + 2).min(lex.by_len.len() - 1);
+        let word_mask = ascii_letter_mask(&lower);
 
         for l in min_len..=max_len {
             for &idx in &lex.by_len[l] {
+                let cand_mask = lex.letter_masks[idx as usize];
+                if (word_mask & !cand_mask).count_ones() > 3
+                    || (cand_mask & !word_mask).count_ones() > 3
+                {
+                    continue;
+                }
                 let lw = &lex.lower_words[idx as usize];
                 if lw == &lower {
                     continue;
@@ -628,8 +809,7 @@ pub fn suggest_for_word(
     let top_margin = corrections
         .get(1)
         .map_or(f32::MAX, |second| second.1 - corrections[0].1);
-    let long_unambiguous_typo =
-        lower.len() >= 6 && top_margin >= 0.20;
+    let long_unambiguous_typo = lower.len() >= 6 && top_margin >= 0.20;
     let commit_threshold = match config.autocorrect {
         AutocorrectMode::Off => f32::NEG_INFINITY,
         AutocorrectMode::Gentle => {
@@ -674,32 +854,36 @@ pub fn suggest_for_word(
     out
 }
 
-fn resample_path(points: &[(f32, f32)], n: usize) -> Vec<(f32, f32)> {
-    if points.is_empty() || n == 0 {
-        return Vec::new();
+fn resample_path_32(points: &[(f32, f32)], out: &mut [(f32, f32); GLIDE_SAMPLES]) -> bool {
+    if points.is_empty() {
+        return false;
     }
     if points.len() == 1 {
-        return vec![points[0]; n];
+        out.fill(points[0]);
+        return true;
     }
-    let mut cum = Vec::with_capacity(points.len());
-    cum.push(0.0f32);
+    let mut stack_cum = [0.0f32; 64];
+    let mut heap_cum = Vec::new();
+    let cum: &mut [f32] = if points.len() <= stack_cum.len() {
+        &mut stack_cum[..points.len()]
+    } else {
+        heap_cum.resize(points.len(), 0.0f32);
+        &mut heap_cum
+    };
     let mut total = 0.0f32;
-    for w in points.windows(2) {
-        let d = (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
+    for i in 1..points.len() {
+        let d = (points[i].0 - points[i - 1].0).hypot(points[i].1 - points[i - 1].1);
         total += d;
-        cum.push(total);
+        cum[i] = total;
     }
     if total <= 1e-6 {
-        return vec![points[0]; n];
+        out.fill(points[0]);
+        return true;
     }
-    let mut out = Vec::with_capacity(n);
     let mut seg = 0usize;
-    for k in 0..n {
-        let target = if n == 1 {
-            0.0
-        } else {
-            total * (k as f32) / ((n - 1) as f32)
-        };
+    let denom = (GLIDE_SAMPLES - 1) as f32;
+    for k in 0..GLIDE_SAMPLES {
+        let target = total * (k as f32) / denom;
         while seg + 1 < cum.len() - 1 && cum[seg + 1] < target {
             seg += 1;
         }
@@ -712,9 +896,9 @@ fn resample_path(points: &[(f32, f32)], n: usize) -> Vec<(f32, f32)> {
         };
         let p0 = points[seg];
         let p1 = points[seg + 1];
-        out.push((p0.0 + (p1.0 - p0.0) * t, p0.1 + (p1.1 - p0.1) * t));
+        out[k] = (p0.0 + (p1.0 - p0.0) * t, p0.1 + (p1.1 - p0.1) * t);
     }
-    out
+    true
 }
 
 fn path_length_adj(points: &[(f32, f32)]) -> f32 {
@@ -724,8 +908,8 @@ fn path_length_adj(points: &[(f32, f32)]) -> f32 {
         .sum()
 }
 
-fn word_key_points(word: &str) -> Option<Vec<(f32, f32)>> {
-    let mut pts = Vec::with_capacity(word.len());
+fn word_key_points_buf(word: &str, out: &mut [(f32, f32); 24]) -> Option<usize> {
+    let mut len = 0usize;
     let mut prev: Option<char> = None;
     for ch in word.chars() {
         if !ch.is_ascii_alphabetic() {
@@ -736,12 +920,16 @@ fn word_key_points(word: &str) -> Option<Vec<(f32, f32)>> {
             continue;
         }
         prev = Some(lc);
-        pts.push(QwertyGeometry::key_center(lc)?);
+        if len >= out.len() {
+            break;
+        }
+        out[len] = QwertyGeometry::key_center(lc)?;
+        len += 1;
     }
-    if pts.is_empty() {
+    if len == 0 {
         None
     } else {
-        Some(pts)
+        Some(len)
     }
 }
 
@@ -754,8 +942,8 @@ pub fn decode_glide(
     if points.len() < 2 {
         return Vec::new();
     }
-    let resampled = resample_path(points, GLIDE_SAMPLES);
-    if resampled.len() < 2 {
+    let mut resampled = [(0.0f32, 0.0f32); GLIDE_SAMPLES];
+    if !resample_path_32(points, &mut resampled) {
         return Vec::new();
     }
     let user_len = path_length_adj(&resampled);
@@ -764,7 +952,7 @@ pub fn decode_glide(
     }
 
     let start_pt = resampled[0];
-    let end_pt = resampled[resampled.len() - 1];
+    let end_pt = resampled[GLIDE_SAMPLES - 1];
     let start_keys = QwertyGeometry::nearby_keys(start_pt.0, start_pt.1, 0.22);
     let end_keys = QwertyGeometry::nearby_keys(end_pt.0, end_pt.1, 0.22);
     if start_keys.is_empty() || end_keys.is_empty() {
@@ -779,6 +967,8 @@ pub fn decode_glide(
 
     let mut scored: Vec<(String, f32)> = Vec::new();
     let mut seen_lower: HashSet<String> = HashSet::new();
+    let mut key_buf = [(0.0f32, 0.0f32); 24];
+    let mut ideal = [(0.0f32, 0.0f32); GLIDE_SAMPLES];
 
     for &(sc, sd) in start_keys.iter().take(4) {
         let f = (sc as u8) - b'a';
@@ -790,13 +980,14 @@ pub fn decode_glide(
                 if lw.len() < 2 || lex.contractions.contains_key(lw.as_str()) {
                     continue;
                 }
-                let Some(key_pts) = word_key_points(lw) else {
+                let Some(key_len) = word_key_points_buf(lw, &mut key_buf) else {
                     continue;
                 };
-                if key_pts.len() < 2 {
+                if key_len < 2 {
                     continue;
                 }
-                let ideal = resample_path(&key_pts, GLIDE_SAMPLES);
+                let key_pts = &key_buf[..key_len];
+                resample_path_32(key_pts, &mut ideal);
                 let ideal_len = path_length_adj(&ideal);
 
                 // Mean polyline shape distance in aspect-adjusted coordinates.
@@ -812,7 +1003,7 @@ pub fn decode_glide(
                 // Ordered checkpoint distance: verify touch path visits each unique key in sequence.
                 let mut cursor = 0usize;
                 let mut missed_key_pen = 0.0f32;
-                for &(kx, ky) in &key_pts {
+                for &(kx, ky) in key_pts {
                     let mut best_k = cursor;
                     let mut best_kd = f32::MAX;
                     for k in cursor..GLIDE_SAMPLES {
@@ -825,7 +1016,7 @@ pub fn decode_glide(
                     cursor = best_k;
                     missed_key_pen += best_kd;
                 }
-                missed_key_pen /= key_pts.len() as f32;
+                missed_key_pen /= key_len as f32;
 
                 let len_diff = (user_len - ideal_len).abs() / user_len.max(ideal_len).max(0.08);
                 let freq_bonus = lex.freq_prior(idx) * 0.14;
@@ -861,13 +1052,13 @@ pub fn decode_glide(
         if lp.len() < 2 || !seen_lower.insert(lp.clone()) {
             continue;
         }
-        let Some(key_pts) = word_key_points(&lp) else {
+        let Some(key_len) = word_key_points_buf(&lp, &mut key_buf) else {
             continue;
         };
-        if key_pts.len() < 2 {
+        if key_len < 2 {
             continue;
         }
-        let ideal = resample_path(&key_pts, GLIDE_SAMPLES);
+        resample_path_32(&key_buf[..key_len], &mut ideal);
         let sum_d: f32 = resampled
             .iter()
             .zip(ideal.iter())
@@ -888,7 +1079,7 @@ pub fn decode_glide(
 struct AutoCommitUndo {
     original: String,
     committed: String,
-    had_trailing_space: bool,
+    trailing: &'static str,
 }
 
 #[derive(Debug)]
@@ -983,6 +1174,19 @@ impl KeyboardSession {
         db: &EmojiDatabase,
         usage: &HashMap<String, u64>,
     ) -> KeyboardOutput {
+        self.tap_key_checked(ch, norm_x, norm_y, context_before, false, db, usage)
+    }
+
+    pub fn tap_key_checked(
+        &mut self,
+        ch: char,
+        norm_x: f32,
+        norm_y: f32,
+        context_before: Option<&str>,
+        system_known: bool,
+        db: &EmojiDatabase,
+        usage: &HashMap<String, u64>,
+    ) -> KeyboardOutput {
         self.last_space_double = false;
         self.last_deleted_word = None;
         self.last_auto_commit = None;
@@ -1022,10 +1226,19 @@ impl KeyboardSession {
         let mut new_ctx = context_before.unwrap_or("").to_string();
         new_ctx.push_str(&edit.insert);
 
-        let candidates = if self.current_word.is_empty() {
-            self.next_word_candidates(Some(&new_ctx))
+        let (candidates, likely_next_chars) = if self.current_word.is_empty() {
+            (self.next_word_candidates(Some(&new_ctx)), String::new())
         } else {
-            suggest_for_word(&self.current_word, &self.tap_points, &self.config, self.shift_state)
+            (
+                suggest_for_word_checked(
+                    &self.current_word,
+                    &self.tap_points,
+                    &self.config,
+                    self.shift_state,
+                    system_known,
+                ),
+                compute_likely_next_chars(&self.current_word),
+            )
         };
         let emoji_hints = self.emoji_hints_for(db, Some(&new_ctx), usage);
 
@@ -1036,6 +1249,7 @@ impl KeyboardSession {
             undo_word: None,
             shift_state: self.shift_state,
             auto_space_active: false,
+            likely_next_chars,
         }
     }
 
@@ -1075,23 +1289,39 @@ impl KeyboardSession {
         new_ctx.push_str(&edit.insert);
         self.update_auto_caps_for_context(Some(&new_ctx));
 
+        let (candidates, likely_next_chars) = if self.current_word.is_empty() {
+            (self.next_word_candidates(Some(&new_ctx)), String::new())
+        } else {
+            (
+                suggest_for_word(&self.current_word, &self.tap_points, &self.config, self.shift_state),
+                compute_likely_next_chars(&self.current_word),
+            )
+        };
+
         KeyboardOutput {
             edit,
-            candidates: if self.current_word.is_empty() {
-                self.next_word_candidates(Some(&new_ctx))
-            } else {
-                suggest_for_word(&self.current_word, &self.tap_points, &self.config, self.shift_state)
-            },
+            candidates,
             emoji_hints: self.emoji_hints_for(db, Some(&new_ctx), usage),
             undo_word: None,
             shift_state: self.shift_state,
             auto_space_active: false,
+            likely_next_chars,
         }
     }
 
     pub fn tap_space(
         &mut self,
         context_before: Option<&str>,
+        db: &EmojiDatabase,
+        usage: &HashMap<String, u64>,
+    ) -> KeyboardOutput {
+        self.tap_space_checked(context_before, false, db, usage)
+    }
+
+    pub fn tap_space_checked(
+        &mut self,
+        context_before: Option<&str>,
+        system_known: bool,
         db: &EmojiDatabase,
         usage: &HashMap<String, u64>,
     ) -> KeyboardOutput {
@@ -1131,6 +1361,7 @@ impl KeyboardSession {
                 undo_word: None,
                 shift_state: self.shift_state,
                 auto_space_active: false,
+                likely_next_chars: String::new(),
             };
         }
 
@@ -1138,11 +1369,12 @@ impl KeyboardSession {
         let mut edit = TextEdit::default();
 
         if !self.current_word.is_empty() {
-            let sugg = suggest_for_word(
+            let sugg = suggest_for_word_checked(
                 &self.current_word,
                 &self.tap_points,
                 &self.config,
                 self.shift_state,
+                system_known,
             );
             if let Some(best) = sugg.iter().find(|c| c.auto_commit) {
                 let orig = self.current_word.clone();
@@ -1152,7 +1384,7 @@ impl KeyboardSession {
                 self.last_auto_commit = Some(AutoCommitUndo {
                     original: orig,
                     committed: committed.clone(),
-                    had_trailing_space: true,
+                    trailing: " ",
                 });
             } else {
                 edit.insert.push(' ');
@@ -1179,6 +1411,7 @@ impl KeyboardSession {
             undo_word: None,
             shift_state: self.shift_state,
             auto_space_active: false,
+            likely_next_chars: String::new(),
         }
     }
 
@@ -1188,26 +1421,65 @@ impl KeyboardSession {
         db: &EmojiDatabase,
         usage: &HashMap<String, u64>,
     ) -> KeyboardOutput {
+        self.tap_return_checked(context_before, false, db, usage)
+    }
+
+    pub fn tap_return_checked(
+        &mut self,
+        context_before: Option<&str>,
+        system_known: bool,
+        db: &EmojiDatabase,
+        usage: &HashMap<String, u64>,
+    ) -> KeyboardOutput {
         self.last_deleted_word = None;
-        self.last_auto_commit = None;
         self.pending_glide_space = false;
         self.last_space_double = false;
+        self.sync_current_word_from_context(context_before);
+
+        let raw_ctx = context_before.unwrap_or("");
+        let mut edit = TextEdit {
+            delete_backward: 0,
+            insert: "\n".to_string(),
+        };
+
+        if !self.current_word.is_empty() {
+            let sugg = suggest_for_word_checked(
+                &self.current_word,
+                &self.tap_points,
+                &self.config,
+                self.shift_state,
+                system_known,
+            );
+            if let Some(best) = sugg.iter().find(|c| c.auto_commit) {
+                let orig = self.current_word.clone();
+                let committed = best.text.clone();
+                edit.delete_backward = orig.chars().count();
+                edit.insert = format!("{committed}\n");
+                self.last_auto_commit = Some(AutoCommitUndo {
+                    original: orig,
+                    committed,
+                    trailing: "\n",
+                });
+            } else {
+                self.last_auto_commit = None;
+            }
+        } else {
+            self.last_auto_commit = None;
+        }
+
         self.current_word.clear();
         self.tap_points.clear();
-        let mut new_ctx = context_before.unwrap_or("").to_string();
-        new_ctx.push('\n');
+        let new_ctx = apply_edit_preview(raw_ctx, &edit);
         self.update_auto_caps_for_context(Some(&new_ctx));
 
         KeyboardOutput {
-            edit: TextEdit {
-                delete_backward: 0,
-                insert: "\n".to_string(),
-            },
+            edit,
             candidates: self.next_word_candidates(Some(&new_ctx)),
             emoji_hints: self.emoji_hints_for(db, Some(&new_ctx), usage),
             undo_word: None,
             shift_state: self.shift_state,
             auto_space_active: false,
+            likely_next_chars: String::new(),
         }
     }
 
@@ -1220,40 +1492,34 @@ impl KeyboardSession {
         self.last_space_double = false;
 
         if self.pending_glide_space {
-            // Undo whole pending glide word on immediate Backspace if tracked, else delete 1.
             self.pending_glide_space = false;
         }
 
         if let Some(undo) = self.last_auto_commit.take() {
             let raw = context_before.unwrap_or("");
-            let expected_suffix = if undo.had_trailing_space {
-                format!("{} ", undo.committed)
-            } else {
-                undo.committed.clone()
-            };
+            let expected_suffix = format!("{}{}", undo.committed, undo.trailing);
             if raw.ends_with(&expected_suffix) {
                 self.config
                     .rejected_corrections
                     .insert(undo.original.to_ascii_lowercase(), undo.committed.to_ascii_lowercase());
-                let restored = if undo.had_trailing_space {
-                    format!("{} ", undo.original)
-                } else {
-                    undo.original.clone()
-                };
+                let restored = format!("{}{}", undo.original, undo.trailing);
                 let edit = TextEdit {
                     delete_backward: expected_suffix.chars().count(),
                     insert: restored,
                 };
-                self.current_word = if undo.had_trailing_space {
-                    String::new()
-                } else {
+                self.current_word = if undo.trailing.is_empty() {
                     undo.original
+                } else {
+                    String::new()
                 };
                 let new_ctx = apply_edit_preview(raw, &edit);
-                let cands = if self.current_word.is_empty() {
-                    self.next_word_candidates(Some(&new_ctx))
+                let (cands, likely) = if self.current_word.is_empty() {
+                    (self.next_word_candidates(Some(&new_ctx)), String::new())
                 } else {
-                    suggest_for_word(&self.current_word, &self.tap_points, &self.config, self.shift_state)
+                    (
+                        suggest_for_word(&self.current_word, &self.tap_points, &self.config, self.shift_state),
+                        compute_likely_next_chars(&self.current_word),
+                    )
                 };
                 return KeyboardOutput {
                     edit,
@@ -1262,6 +1528,7 @@ impl KeyboardSession {
                     undo_word: None,
                     shift_state: self.shift_state,
                     auto_space_active: false,
+                    likely_next_chars: likely,
                 };
             }
         }
@@ -1280,10 +1547,13 @@ impl KeyboardSession {
             self.tap_points.truncate(self.current_word.len());
         }
 
-        let candidates = if self.current_word.is_empty() {
-            self.next_word_candidates(Some(&new_ctx))
+        let (candidates, likely_next_chars) = if self.current_word.is_empty() {
+            (self.next_word_candidates(Some(&new_ctx)), String::new())
         } else {
-            suggest_for_word(&self.current_word, &self.tap_points, &self.config, self.shift_state)
+            (
+                suggest_for_word(&self.current_word, &self.tap_points, &self.config, self.shift_state),
+                compute_likely_next_chars(&self.current_word),
+            )
         };
 
         KeyboardOutput {
@@ -1293,6 +1563,7 @@ impl KeyboardSession {
             undo_word: None,
             shift_state: self.shift_state,
             auto_space_active: false,
+            likely_next_chars,
         }
     }
 
@@ -1315,6 +1586,7 @@ impl KeyboardSession {
                 undo_word: None,
                 shift_state: self.shift_state,
                 auto_space_active: false,
+                likely_next_chars: String::new(),
             };
         }
 
@@ -1353,6 +1625,7 @@ impl KeyboardSession {
             undo_word: self.last_deleted_word.clone(),
             shift_state: self.shift_state,
             auto_space_active: false,
+            likely_next_chars: String::new(),
         }
     }
 
@@ -1368,20 +1641,25 @@ impl KeyboardSession {
         let mut new_ctx = context_before.unwrap_or("").to_string();
         new_ctx.push_str(&restored);
         self.current_word = extract_trailing_token(&new_ctx).to_string();
+        let (candidates, likely_next_chars) = if self.current_word.is_empty() {
+            (self.next_word_candidates(Some(&new_ctx)), String::new())
+        } else {
+            (
+                suggest_for_word(&self.current_word, &self.tap_points, &self.config, self.shift_state),
+                compute_likely_next_chars(&self.current_word),
+            )
+        };
         KeyboardOutput {
             edit: TextEdit {
                 delete_backward: 0,
                 insert: restored,
             },
-            candidates: if self.current_word.is_empty() {
-                self.next_word_candidates(Some(&new_ctx))
-            } else {
-                suggest_for_word(&self.current_word, &self.tap_points, &self.config, self.shift_state)
-            },
+            candidates,
             emoji_hints: self.emoji_hints_for(db, Some(&new_ctx), usage),
             undo_word: None,
             shift_state: self.shift_state,
             auto_space_active: false,
+            likely_next_chars,
         }
     }
 
@@ -1445,6 +1723,7 @@ impl KeyboardSession {
             undo_word: None,
             shift_state: self.shift_state,
             auto_space_active: true,
+            likely_next_chars: String::new(),
         }
     }
 
@@ -1500,12 +1779,23 @@ impl KeyboardSession {
             undo_word: None,
             shift_state: self.shift_state,
             auto_space_active: false,
+            likely_next_chars: String::new(),
         }
     }
 
     pub fn sync_context(
         &mut self,
         context_before: Option<&str>,
+        db: &EmojiDatabase,
+        usage: &HashMap<String, u64>,
+    ) -> KeyboardOutput {
+        self.sync_context_checked(context_before, false, db, usage)
+    }
+
+    pub fn sync_context_checked(
+        &mut self,
+        context_before: Option<&str>,
+        system_known: bool,
         db: &EmojiDatabase,
         usage: &HashMap<String, u64>,
     ) -> KeyboardOutput {
@@ -1518,10 +1808,19 @@ impl KeyboardSession {
         } else if self.shift_state == ShiftState::Once {
             self.shift_state = ShiftState::Off;
         }
-        let candidates = if self.current_word.is_empty() {
-            self.next_word_candidates(context_before)
+        let (candidates, likely_next_chars) = if self.current_word.is_empty() {
+            (self.next_word_candidates(context_before), String::new())
         } else {
-            suggest_for_word(&self.current_word, &self.tap_points, &self.config, self.shift_state)
+            (
+                suggest_for_word_checked(
+                    &self.current_word,
+                    &self.tap_points,
+                    &self.config,
+                    self.shift_state,
+                    system_known,
+                ),
+                compute_likely_next_chars(&self.current_word),
+            )
         };
         KeyboardOutput {
             edit: TextEdit::default(),
@@ -1530,6 +1829,7 @@ impl KeyboardSession {
             undo_word: self.last_deleted_word.clone(),
             shift_state: self.shift_state,
             auto_space_active: self.pending_glide_space,
+            likely_next_chars,
         }
     }
 }
@@ -1586,6 +1886,8 @@ fn apply_edit_preview(context: &str, edit: &TextEdit) -> String {
 
 fn build_contractions() -> HashMap<&'static str, &'static str> {
     HashMap::from([
+        ("i", "I"),
+        ("aint", "ain't"),
         ("dont", "don't"),
         ("cant", "can't"),
         ("wont", "won't"),
@@ -2039,5 +2341,83 @@ mod tests {
         let mid = sess.sync_context(Some("on my way teh"), db(), &usage);
         assert_eq!(mid.shift_state, ShiftState::Off);
         assert_eq!(mid.candidates[1].text, "the");
+    }
+
+    #[test]
+    fn single_i_auto_capitalizes_and_uppercase_i_stays_literal() {
+        let cfg = KeyboardConfig::default();
+        let low = suggest_for_word("i", &[], &cfg, ShiftState::Off);
+        assert_eq!(low[1].text, "I");
+        assert!(low[1].auto_commit);
+
+        let up = suggest_for_word("I", &[], &cfg, ShiftState::Off);
+        assert_eq!(up.len(), 1);
+        assert_eq!(up[0].text, "I");
+        assert!(!up[0].auto_commit);
+    }
+
+    #[test]
+    fn tap_return_commits_pending_autocorrect_and_snippets() {
+        let mut sess = KeyboardSession::new(KeyboardConfig::default());
+        let usage = HashMap::new();
+
+        let ret = sess.tap_return(Some("fix teh"), db(), &usage);
+        assert_eq!(ret.edit.delete_backward, 3);
+        assert_eq!(ret.edit.insert, "the\n");
+
+        let bk = sess.tap_backspace(Some("fix the\n"), db(), &usage);
+        assert_eq!(bk.edit.delete_backward, 4);
+        assert_eq!(bk.edit.insert, "teh\n");
+
+        let mut sess2 = KeyboardSession::new(KeyboardConfig::default());
+        let snip = sess2.tap_return(Some("hi /shrug"), db(), &usage);
+        assert_eq!(snip.edit.delete_backward, 6);
+        assert_eq!(snip.edit.insert, "¯\\_(ツ)_/¯\n");
+    }
+
+    #[test]
+    fn system_known_flag_shields_out_of_lexicon_words() {
+        let cfg = KeyboardConfig::default();
+        for w in ["Subiaco", "pharmacokinetics"] {
+            let shielded = suggest_for_word_checked(w, &[], &cfg, ShiftState::Off, true);
+            assert!(
+                !shielded.iter().any(|c| c.auto_commit),
+                "{w} should not auto-commit when system_known=true: {shielded:?}"
+            );
+            assert_eq!(shielded[0].text, w);
+        }
+    }
+
+    #[test]
+    fn cleaned_lexicon_drops_fragments_and_promotes_contractions() {
+        let lex = Lexicon::global();
+        for noise in ["don", "didn", "doesn", "isn", "wasn", "wouldn", "uh", "um", "yeh"] {
+            assert!(
+                !lex.exact.contains_key(noise),
+                "noise token '{noise}' should be stripped from lexicon"
+            );
+        }
+        assert!(lex.exact["don't"] < 200);
+        assert!(lex.exact["i'm"] < 200);
+    }
+
+    #[test]
+    fn likely_next_chars_predicts_common_continuations_and_is_fast() {
+        let next = compute_likely_next_chars("th");
+        for ch in ['e', 'a', 'i', 'o'] {
+            assert!(next.contains(ch), "expected '{ch}' in likely_next_chars('th'), got '{next}'");
+        }
+
+        let cfg = KeyboardConfig::default();
+        let t0 = std::time::Instant::now();
+        for _ in 0..100 {
+            let out = suggest_for_word("definately", &[], &cfg, ShiftState::Off);
+            assert_eq!(out[1].text, "definitely");
+        }
+        let elapsed = t0.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "100 suggestions took too long: {elapsed:?}"
+        );
     }
 }

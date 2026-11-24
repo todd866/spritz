@@ -15,12 +15,15 @@ SpritzIosEngine *spritz_ios_create(const char *config_dir, const char *state_dir
 void spritz_ios_destroy(SpritzIosEngine *engine);
 void spritz_ios_free_cstr(char *ptr);
 
+size_t spritz_ios_lexicon_count(void);
+
 char *spritz_ios_tap_key(
     SpritzIosEngine *engine,
     const char *ch,
     float x,
     float y,
-    const char *context_before
+    const char *context_before,
+    bool system_known
 );
 
 char *spritz_ios_insert_direct(
@@ -31,12 +34,14 @@ char *spritz_ios_insert_direct(
 
 char *spritz_ios_tap_space(
     SpritzIosEngine *engine,
-    const char *context_before
+    const char *context_before,
+    bool system_known
 );
 
 char *spritz_ios_tap_return(
     SpritzIosEngine *engine,
-    const char *context_before
+    const char *context_before,
+    bool system_known
 );
 
 char *spritz_ios_tap_backspace(
@@ -68,7 +73,8 @@ void spritz_ios_set_shift(SpritzIosEngine *engine, int32_t state);
 
 char *spritz_ios_sync_context(
     SpritzIosEngine *engine,
-    const char *context_before
+    const char *context_before,
+    bool system_known
 );
 
 char *spritz_ios_emoji_snapshot(

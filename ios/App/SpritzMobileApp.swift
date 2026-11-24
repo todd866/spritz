@@ -17,13 +17,16 @@ final class MobileAppModel: ObservableObject {
     @Published var keyboardEnabled: Bool
     @Published var selectedTab: AppTab = .keyboard
     @Published var previewDeckMode: PreviewDeckMode?
+    @Published var useSystemKeyboard: Bool = false
     @Published var sampleText: String
     @Published var configVersion: Int = 0
+    let lexiconWordCount: Int
 
     init() {
         let cfg = bridge.loadConfig()
         self.config = cfg
         self.keyboardEnabled = SpritzIosBridge.isKeyboardEnabledInSettings()
+        self.lexiconWordCount = bridge.lexiconCount()
         self.sampleText = "Hey mate, grabbing coffee soon — don't worry about the colour, I'm on my way "
         self.emojiSnapshot = bridge.emojiSnapshot(mode: "pinned", query: "", contextBefore: "")
 
@@ -33,6 +36,7 @@ final class MobileAppModel: ObservableObject {
         }
         if let idx = args.firstIndex(of: "--preview-deck"), args.indices.contains(idx + 1) {
             self.previewDeckMode = PreviewDeckMode(rawValue: args[idx + 1])
+            self.useSystemKeyboard = false
         }
         if let idx = args.firstIndex(of: "--preview-text"), args.indices.contains(idx + 1) {
             self.sampleText = args[idx + 1]
@@ -100,30 +104,35 @@ private struct KeyboardTabView: View {
             statusHeader
             Divider()
             testPadArea
-            GeometryReader { geo in
-                EmbeddedDeckRepresentable(
-                    bridge: model.bridge,
-                    target: model.testPadTarget,
-                    configVersion: model.configVersion,
-                    previewMode: model.previewDeckMode,
-                    isDark: colorScheme == .dark,
-                    deckWidth: geo.size.width,
-                    onMutated: {
-                        if let tv = model.testPadTarget.textView {
-                            model.sampleText = tv.text ?? ""
+            if !model.useSystemKeyboard {
+                GeometryReader { geo in
+                    EmbeddedDeckRepresentable(
+                        bridge: model.bridge,
+                        target: model.testPadTarget,
+                        configVersion: model.configVersion,
+                        previewMode: model.previewDeckMode,
+                        isDark: colorScheme == .dark,
+                        deckWidth: geo.size.width,
+                        onMutated: {
+                            if let tv = model.testPadTarget.textView {
+                                model.sampleText = tv.text ?? ""
+                            }
+                        },
+                        onSwitchToSystem: {
+                            model.useSystemKeyboard = true
                         }
-                    }
-                )
-                .frame(width: geo.size.width, height: deckHeight)
-                .clipped()
+                    )
+                    .frame(width: geo.size.width, height: deckHeight)
+                }
+                .frame(height: deckHeight)
+                .zIndex(5)
             }
-            .frame(height: deckHeight)
         }
         .background(Color(.systemGroupedBackground))
     }
 
     private var deckHeight: CGFloat {
-        38 + (model.config.numberRow ? 248 : 210)
+        SpritzKeyboardContainerView.preferredHeight(numberRow: model.config.numberRow)
     }
 
     private var statusHeader: some View {
@@ -131,24 +140,30 @@ private struct KeyboardTabView: View {
             Circle()
                 .fill(model.keyboardEnabled ? Color.green : Color.orange)
                 .frame(width: 8, height: 8)
-            Text("Spritz Keyboard")
+            Text("Spritz")
                 .font(.subheadline.weight(.semibold))
-            Text(model.keyboardEnabled ? "Active" : "Enable in Settings")
+            Text(model.keyboardEnabled ? "Enabled" : "Off")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Spacer(minLength: 0)
+            Spacer(minLength: 4)
+            Picker("Input", selection: $model.useSystemKeyboard) {
+                Text("Deck").tag(false)
+                Text("System").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 126)
             Button {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }
             } label: {
-                Label("Settings", systemImage: "gearshape")
+                Image(systemName: "gearshape")
                     .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color(.tertiarySystemFill), in: Capsule())
+                    .frame(width: 28, height: 28)
+                    .background(Color(.tertiarySystemFill), in: Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Keyboard Settings")
         }
         .padding(.horizontal, 14)
         .frame(height: 44)
@@ -160,6 +175,7 @@ private struct KeyboardTabView: View {
             TestPadRepresentable(
                 text: $model.sampleText,
                 target: model.testPadTarget,
+                useSystemKeyboard: model.useSystemKeyboard,
                 isDark: colorScheme == .dark
             )
             .padding(12)
@@ -246,7 +262,7 @@ private struct TypingTabView: View {
                     Label("On-device dictionary", systemImage: "lock.shield")
                         .font(.subheadline)
                     Spacer()
-                    Text("22,229 · \(model.config.personalWords.count) learned")
+                    Text("\(model.lexiconWordCount.formatted()) · \(model.config.personalWords.count) learned")
                         .font(.subheadline.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -503,6 +519,7 @@ private struct EmojiPinPickerSheet: View {
 private struct TestPadRepresentable: UIViewRepresentable {
     @Binding var text: String
     let target: TextViewDocumentTarget
+    let useSystemKeyboard: Bool
     let isDark: Bool
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -514,8 +531,8 @@ private struct TestPadRepresentable: UIViewRepresentable {
         tv.textColor = isDark ? .white : .label
         tv.text = text
         tv.selectedRange = NSRange(location: (text as NSString).length, length: 0)
-        // Suppress system software keyboard so our live Spritz deck stays active underneath.
-        tv.inputView = UIView()
+        tv.inputView = useSystemKeyboard ? nil : context.coordinator.dummyInputView
+        context.coordinator.lastUseSystemKeyboard = useSystemKeyboard
         tv.delegate = context.coordinator
         target.textView = tv
         target.onDidMutate = { [weak tv] in
@@ -533,6 +550,16 @@ private struct TestPadRepresentable: UIViewRepresentable {
 
     func updateUIView(_ tv: UITextView, context: Context) {
         tv.textColor = isDark ? .white : .label
+        if context.coordinator.lastUseSystemKeyboard != useSystemKeyboard {
+            context.coordinator.lastUseSystemKeyboard = useSystemKeyboard
+            tv.inputView = useSystemKeyboard ? nil : context.coordinator.dummyInputView
+            tv.reloadInputViews()
+            if !tv.isFirstResponder {
+                DispatchQueue.main.async {
+                    tv.becomeFirstResponder()
+                }
+            }
+        }
         if tv.text != text {
             tv.text = text
             tv.selectedRange = NSRange(location: (text as NSString).length, length: 0)
@@ -542,6 +569,8 @@ private struct TestPadRepresentable: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, UITextViewDelegate {
         let parent: TestPadRepresentable
+        let dummyInputView = UIView()
+        var lastUseSystemKeyboard: Bool?
         init(parent: TestPadRepresentable) { self.parent = parent }
         func textViewDidChange(_ textView: UITextView) {
             let val = textView.text ?? ""
@@ -560,13 +589,14 @@ private struct EmbeddedDeckRepresentable: UIViewRepresentable {
     let isDark: Bool
     let deckWidth: CGFloat
     let onMutated: () -> Void
+    let onSwitchToSystem: () -> Void
 
     final class HostWrapperView: UIView {
         let deck: SpritzKeyboardContainerView
         init(deck: SpritzKeyboardContainerView) {
             self.deck = deck
             super.init(frame: .zero)
-            clipsToBounds = true
+            clipsToBounds = false
             deck.translatesAutoresizingMaskIntoConstraints = false
             deck.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             addSubview(deck)
@@ -591,6 +621,9 @@ private struct EmbeddedDeckRepresentable: UIViewRepresentable {
         let container = SpritzKeyboardContainerView(bridge: bridge, needsGlobe: true)
         container.target = target
         container.onDocumentMutated = onMutated
+        container.onGlobePress = { _, _ in
+            onSwitchToSystem()
+        }
         container.updateAppearance(dark: isDark)
         container.reloadConfiguration(needsGlobe: true)
         if let previewMode {

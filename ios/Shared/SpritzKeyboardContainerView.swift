@@ -32,6 +32,7 @@ final class SpritzKeyboardContainerView: UIView {
     private var emojiSearchResults: [EmojiItemDTO] = []
     private var lastOutput: KeyboardOutputDTO?
     private var needsGlobeKey: Bool
+    private var lastSelfMutationUptime: TimeInterval = 0
 
     init(bridge: SpritzIosBridge, needsGlobe: Bool) {
         self.bridge = bridge
@@ -47,20 +48,26 @@ final class SpritzKeyboardContainerView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    static func preferredHeight(numberRow: Bool) -> CGFloat {
+        InstrumentBarView.height + (numberRow ? 258 : 222)
+    }
+
     var totalHeight: CGFloat {
-        InstrumentBarView.height + (config.numberRow ? 248 : 210)
+        Self.preferredHeight(numberRow: config.numberRow)
     }
 
     private func setupHierarchy() {
         translatesAutoresizingMaskIntoConstraints = false
+        clipsToBounds = false
         heightConstraint = heightAnchor.constraint(equalToConstant: totalHeight)
+        heightConstraint.priority = UILayoutPriority(999)
         heightConstraint.isActive = true
 
         addSubview(instrumentBar)
         deckView.translatesAutoresizingMaskIntoConstraints = false
         emojiDeck.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(deckView)
         addSubview(emojiDeck)
+        addSubview(deckView)
         emojiDeck.isHidden = true
 
         NSLayoutConstraint.activate([
@@ -80,15 +87,21 @@ final class SpritzKeyboardContainerView: UIView {
         ])
     }
 
+    private func markSelfMutation() {
+        lastSelfMutationUptime = ProcessInfo.processInfo.systemUptime
+    }
+
     private func wireCallbacks() {
         instrumentBar.onSelectCandidate = { [weak self] idx in
             guard let self, let target = self.target else { return }
+            self.markSelfMutation()
             self.lastOutput = self.bridge.acceptCandidate(index: idx, target: target)
             self.notifyStateChanged()
         }
 
         instrumentBar.onSelectEmojiHint = { [weak self] hint in
             guard let self, let target = self.target else { return }
+            self.markSelfMutation()
             _ = self.bridge.emojiPick(hex: hint.hex, target: target)
             self.lastOutput = self.bridge.syncContext(target: target)
             self.notifyStateChanged()
@@ -96,6 +109,7 @@ final class SpritzKeyboardContainerView: UIView {
 
         instrumentBar.onTapUndoDelete = { [weak self] in
             guard let self, let target = self.target else { return }
+            self.markSelfMutation()
             self.lastOutput = self.bridge.undoLastDelete(target: target)
             self.notifyStateChanged()
         }
@@ -113,20 +127,6 @@ final class SpritzKeyboardContainerView: UIView {
             self.refreshBar()
         }
 
-        instrumentBar.onToggleEmoji = { [weak self] in
-            guard let self else { return }
-            self.isToolsVisible = false
-            self.isSnippetsVisible = false
-            self.isEmojiSearchActive = false
-            self.isEmojiGridVisible.toggle()
-            if self.isEmojiGridVisible {
-                self.currentEmojiMode = "auto"
-                self.refreshEmojiGrid()
-            }
-            self.updateDeckVisibility()
-            self.refreshBar()
-        }
-
         instrumentBar.onCloseEmojiSearch = { [weak self] in
             guard let self else { return }
             self.isEmojiSearchActive = false
@@ -139,6 +139,7 @@ final class SpritzKeyboardContainerView: UIView {
 
         instrumentBar.onSelectEmojiResult = { [weak self] item in
             guard let self else { return }
+            self.markSelfMutation()
             _ = self.bridge.emojiPick(hex: item.hex, target: self.target)
             self.isEmojiSearchActive = false
             self.emojiSearchQuery = ""
@@ -156,11 +157,11 @@ final class SpritzKeyboardContainerView: UIView {
 
         instrumentBar.onSelectSnippet = { [weak self] body in
             guard let self, let target = self.target else { return }
+            self.markSelfMutation()
             self.lastOutput = self.bridge.insertDirect(body, target: target)
             self.isSnippetsVisible = false
             self.isToolsVisible = false
-            self.refreshBar()
-            self.onDocumentMutated?()
+            self.notifyStateChanged()
         }
 
         deckView.onTapCharacter = { [weak self] ch, pt in
@@ -171,6 +172,7 @@ final class SpritzKeyboardContainerView: UIView {
                 return
             }
             guard let target = self.target else { return }
+            self.markSelfMutation()
             self.lastOutput = self.bridge.tapKey(ch, normPoint: pt, target: target)
             self.notifyStateChanged()
         }
@@ -183,6 +185,7 @@ final class SpritzKeyboardContainerView: UIView {
                 return
             }
             guard let target = self.target else { return }
+            self.markSelfMutation()
             self.lastOutput = self.bridge.insertDirect(text, target: target)
             self.notifyStateChanged()
         }
@@ -195,6 +198,7 @@ final class SpritzKeyboardContainerView: UIView {
                 return
             }
             guard let target = self.target else { return }
+            self.markSelfMutation()
             self.lastOutput = self.bridge.tapSpace(target: target)
             self.notifyStateChanged()
         }
@@ -203,6 +207,7 @@ final class SpritzKeyboardContainerView: UIView {
             guard let self else { return }
             if self.isEmojiSearchActive {
                 if let first = self.emojiSearchResults.first {
+                    self.markSelfMutation()
                     _ = self.bridge.emojiPick(hex: first.hex, target: self.target)
                 }
                 self.isEmojiSearchActive = false
@@ -215,6 +220,7 @@ final class SpritzKeyboardContainerView: UIView {
                 return
             }
             guard let target = self.target else { return }
+            self.markSelfMutation()
             self.lastOutput = self.bridge.tapReturn(target: target)
             self.notifyStateChanged()
         }
@@ -229,12 +235,14 @@ final class SpritzKeyboardContainerView: UIView {
                 return
             }
             guard let target = self.target else { return }
+            self.markSelfMutation()
             self.lastOutput = self.bridge.tapBackspace(target: target)
             self.notifyStateChanged()
         }
 
         deckView.onSwipeDeleteWord = { [weak self] in
             guard let self, let target = self.target else { return }
+            self.markSelfMutation()
             self.lastOutput = self.bridge.swipeDeleteWord(target: target)
             self.notifyStateChanged()
         }
@@ -246,12 +254,14 @@ final class SpritzKeyboardContainerView: UIView {
         deckView.onGlideComplete = { [weak self] pts in
             guard let self, let target = self.target else { return }
             if self.isEmojiSearchActive { return }
+            self.markSelfMutation()
             self.lastOutput = self.bridge.finishGlide(points: pts, target: target)
             self.notifyStateChanged()
         }
 
         deckView.onTrackpadMove = { [weak self] offset in
             guard let self, let target = self.target else { return }
+            self.markSelfMutation()
             if self.selectModeActive {
                 target.extendSelection(byCharacterOffset: offset)
             } else {
@@ -262,7 +272,17 @@ final class SpritzKeyboardContainerView: UIView {
         }
 
         deckView.onRequestEmoji = { [weak self] in
-            self?.instrumentBar.onToggleEmoji?()
+            guard let self else { return }
+            self.isToolsVisible = false
+            self.isSnippetsVisible = false
+            self.isEmojiSearchActive = false
+            self.isEmojiGridVisible.toggle()
+            if self.isEmojiGridVisible {
+                self.currentEmojiMode = "auto"
+                self.refreshEmojiGrid()
+            }
+            self.updateDeckVisibility()
+            self.refreshBar()
         }
 
         deckView.onGlobePress = { [weak self] view, event in
@@ -271,6 +291,7 @@ final class SpritzKeyboardContainerView: UIView {
 
         emojiDeck.onPickEmoji = { [weak self] item in
             guard let self else { return }
+            self.markSelfMutation()
             _ = self.bridge.emojiPick(hex: item.hex, target: self.target)
             if let target = self.target {
                 self.lastOutput = self.bridge.syncContext(target: target)
@@ -336,8 +357,17 @@ final class SpritzKeyboardContainerView: UIView {
         emojiDeck.applyTheme(theme)
     }
 
+    func handleExternalTextDidChange() {
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastSelfMutationUptime < 0.16 {
+            return
+        }
+        refreshContext()
+    }
+
     func refreshContext() {
         lastOutput = bridge.syncContext(target: target)
+        deckView.setLikelyNextChars(lastOutput?.likelyNextChars ?? "")
         if let shift = lastOutput?.shiftState {
             deckView.setConfiguration(shiftState: shift, returnKeyType: target?.returnKeyType ?? .default)
         } else {
@@ -401,6 +431,7 @@ final class SpritzKeyboardContainerView: UIView {
             selectModeActive.toggle()
             refreshBar()
         case .undo:
+            markSelfMutation()
             if lastOutput?.undoWord != nil {
                 lastOutput = bridge.undoLastDelete(target: target)
             } else {
@@ -416,6 +447,7 @@ final class SpritzKeyboardContainerView: UIView {
             }
         case .paste:
             if let clip = UIPasteboard.general.string, !clip.isEmpty {
+                markSelfMutation()
                 lastOutput = bridge.insertDirect(clip, target: target)
                 notifyStateChanged()
             }
@@ -428,6 +460,9 @@ final class SpritzKeyboardContainerView: UIView {
     private func updateDeckVisibility() {
         deckView.isHidden = isEmojiGridVisible
         emojiDeck.isHidden = !isEmojiGridVisible
+        if !isEmojiGridVisible {
+            bringSubviewToFront(deckView)
+        }
     }
 
     private func refreshEmojiGrid() {
@@ -449,6 +484,7 @@ final class SpritzKeyboardContainerView: UIView {
     }
 
     private func notifyStateChanged() {
+        deckView.setLikelyNextChars(lastOutput?.likelyNextChars ?? "")
         if let shift = lastOutput?.shiftState {
             deckView.setConfiguration(shiftState: shift, returnKeyType: target?.returnKeyType ?? .default)
         }
@@ -475,7 +511,6 @@ final class SpritzKeyboardContainerView: UIView {
             undoWord: lastOutput?.undoWord,
             snippets: config.snippets,
             selectActive: selectModeActive,
-            emojiActive: isEmojiGridVisible,
             emojiSearchQuery: emojiSearchQuery,
             emojiSearchResults: emojiSearchResults
         )

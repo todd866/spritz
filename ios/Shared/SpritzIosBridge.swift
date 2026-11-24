@@ -90,6 +90,7 @@ struct KeyboardOutputDTO: Codable, Equatable {
     let undoWord: String?
     let shiftState: ShiftStateDTO
     let autoSpaceActive: Bool
+    let likelyNextChars: String?
 }
 
 struct EmojiItemDTO: Codable, Equatable {
@@ -255,6 +256,17 @@ final class SpritzIosBridge {
     private var engine: OpaquePointer?
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
+    private let textChecker = UITextChecker()
+    private let spellCheckLanguages: [String] = {
+        let avail = Set(UITextChecker.availableLanguages)
+        var out: [String] = []
+        for lang in ["en_AU", "en_US", "en_GB", "en"] {
+            if avail.contains(lang) {
+                out.append(lang)
+            }
+        }
+        return out.isEmpty ? ["en"] : out
+    }()
 
     static func storageDirectory() -> URL {
         let fm = FileManager.default
@@ -267,7 +279,55 @@ final class SpritzIosBridge {
 
     static func isKeyboardEnabledInSettings() -> Bool {
         let keyboards = UserDefaults.standard.stringArray(forKey: "AppleKeyboards") ?? []
-        return keyboards.contains(SpritzIosConstants.keyboardBundleID)
+        if keyboards.contains(SpritzIosConstants.keyboardBundleID) {
+            return true
+        }
+        return UITextInputMode.activeInputModes.contains { mode in
+            String(describing: mode).contains(SpritzIosConstants.keyboardBundleID)
+        }
+    }
+
+    func lexiconCount() -> Int {
+        Int(spritz_ios_lexicon_count())
+    }
+
+    func isSystemKnownWord(_ word: String) -> Bool {
+        guard word.count >= 2 else { return false }
+        for s in word.unicodeScalars {
+            let v = s.value
+            let isAsciiAlpha = (v >= 65 && v <= 90) || (v >= 97 && v <= 122)
+            if !isAsciiAlpha { return false }
+        }
+        let range = NSRange(location: 0, length: word.utf16.count)
+        for lang in spellCheckLanguages {
+            let misspelled = textChecker.rangeOfMisspelledWord(
+                in: word,
+                range: range,
+                startingAt: 0,
+                wrap: false,
+                language: lang
+            )
+            if misspelled.location == NSNotFound {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func trailingToken(in context: String, appending extra: String = "") -> String {
+        let combined = extra.isEmpty ? context : context + extra
+        var scalars = Array(combined.unicodeScalars)
+        var start = scalars.count
+        while start > 0 {
+            let v = scalars[start - 1].value
+            let isToken = (v >= 65 && v <= 90) || (v >= 97 && v <= 122) || (v >= 48 && v <= 57) || v == 39 || v == 47
+            if isToken {
+                start -= 1
+            } else {
+                break
+            }
+        }
+        return String(String.UnicodeScalarView(scalars[start...]))
     }
 
     init() {
@@ -306,9 +366,14 @@ final class SpritzIosBridge {
     func tapKey(_ ch: String, normPoint: CGPoint, target: TextDocumentTarget) -> KeyboardOutputDTO? {
         guard let engine else { return nil }
         let ctx = target.documentContextBeforeInput ?? ""
+        let token = Self.trailingToken(in: ctx, appending: ch)
+        let known = isSystemKnownWord(token)
         let out = ch.withCString { cKey in
             ctx.withCString { cCtx in
-                decodeJSON(spritz_ios_tap_key(engine, cKey, Float(normPoint.x), Float(normPoint.y), cCtx), as: KeyboardOutputDTO.self)
+                decodeJSON(
+                    spritz_ios_tap_key(engine, cKey, Float(normPoint.x), Float(normPoint.y), cCtx, known),
+                    as: KeyboardOutputDTO.self
+                )
             }
         }
         if let out { applyEdit(out.edit, to: target) }
@@ -330,7 +395,10 @@ final class SpritzIosBridge {
     func tapSpace(target: TextDocumentTarget) -> KeyboardOutputDTO? {
         guard let engine else { return nil }
         let ctx = target.documentContextBeforeInput ?? ""
-        let out = ctx.withCString { decodeJSON(spritz_ios_tap_space(engine, $0), as: KeyboardOutputDTO.self) }
+        let known = isSystemKnownWord(Self.trailingToken(in: ctx))
+        let out = ctx.withCString {
+            decodeJSON(spritz_ios_tap_space(engine, $0, known), as: KeyboardOutputDTO.self)
+        }
         if let out { applyEdit(out.edit, to: target) }
         return out
     }
@@ -338,7 +406,10 @@ final class SpritzIosBridge {
     func tapReturn(target: TextDocumentTarget) -> KeyboardOutputDTO? {
         guard let engine else { return nil }
         let ctx = target.documentContextBeforeInput ?? ""
-        let out = ctx.withCString { decodeJSON(spritz_ios_tap_return(engine, $0), as: KeyboardOutputDTO.self) }
+        let known = isSystemKnownWord(Self.trailingToken(in: ctx))
+        let out = ctx.withCString {
+            decodeJSON(spritz_ios_tap_return(engine, $0, known), as: KeyboardOutputDTO.self)
+        }
         if let out { applyEdit(out.edit, to: target) }
         return out
     }
@@ -400,7 +471,10 @@ final class SpritzIosBridge {
     func syncContext(target: TextDocumentTarget?) -> KeyboardOutputDTO? {
         guard let engine else { return nil }
         let ctx = target?.documentContextBeforeInput ?? ""
-        return ctx.withCString { decodeJSON(spritz_ios_sync_context(engine, $0), as: KeyboardOutputDTO.self) }
+        let known = isSystemKnownWord(Self.trailingToken(in: ctx))
+        return ctx.withCString {
+            decodeJSON(spritz_ios_sync_context(engine, $0, known), as: KeyboardOutputDTO.self)
+        }
     }
 
     func emojiSnapshot(mode: String, query: String, contextBefore: String) -> EmojiSnapshotDTO? {
